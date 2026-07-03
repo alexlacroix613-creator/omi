@@ -123,6 +123,10 @@ extension SettingsContentView {
           Divider()
 
           voiceEngineChatGPTCascadeRow
+
+          Divider()
+
+          voiceCascadeQualityRow
         }
       }
 
@@ -1021,6 +1025,55 @@ extension SettingsContentView {
       .buttonStyle(.borderedProminent)
       .controlSize(.small)
       .disabled(!available && !isSelected)
+    }
+  }
+
+  // MARK: - Voice Engine: cascade voice quality (Pass 3 — live)
+
+  /// Small, minimal picker beside `voiceEngineChatGPTCascadeRow` per the design
+  /// doc's Pass 3 ask (§4b/§6): "Voice quality: System / Neural (when available)",
+  /// with honest subtitles about cost. Reads the real `APIKeyService.isByokActive`
+  /// gate — the same flag `APIClient.buildHeaders` uses to decide whether to
+  /// forward the user's own BYOK keys — so the subtitle never overpromises "no
+  /// bill" in the one case (full BYOK active) where the neural leg can actually
+  /// cost the user something. Shown regardless of whether the cascade engine is
+  /// currently selected, since it's cheap to read ahead and avoids the row
+  /// popping in/out as the user toggles engines.
+  @ViewBuilder
+  var voiceCascadeQualityRow: some View {
+    let isByokActive = APIKeyService.isByokActive
+    let qualityBinding = Binding<CascadeVoiceQualitySelection.Quality>(
+      get: {
+        CascadeVoiceQualitySelection.Quality(rawValue: cascadeVoiceQuality)
+          ?? CascadeVoiceQualitySelection.defaultQuality
+      },
+      set: { cascadeVoiceQuality = $0.rawValue }
+    )
+
+    VStack(alignment: .leading, spacing: 4) {
+      HStack {
+        Text("Voice quality (ChatGPT plan)")
+          .scaledFont(size: 13, weight: .medium)
+          .foregroundColor(OmiColors.textPrimary)
+
+        Spacer()
+
+        Picker("", selection: qualityBinding) {
+          ForEach(CascadeVoiceQualitySelection.Quality.allCases) { quality in
+            Text(quality.displayName).tag(quality)
+          }
+        }
+        .pickerStyle(.menu)
+        .frame(width: 200)
+      }
+
+      Text(
+        CascadeVoiceQualitySelection.costSubtitle(
+          quality: qualityBinding.wrappedValue, isByokActive: isByokActive)
+      )
+      .scaledFont(size: 11)
+      .foregroundColor(OmiColors.textTertiary)
+      .fixedSize(horizontal: false, vertical: true)
     }
   }
 

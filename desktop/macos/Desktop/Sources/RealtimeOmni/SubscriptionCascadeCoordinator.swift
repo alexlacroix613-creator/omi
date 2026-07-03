@@ -111,7 +111,23 @@ final class SubscriptionCascadeCoordinator: ObservableObject {
                 let reply = await bridge.sendMessage(text)
                 return CascadeReasoningResult(replyText: reply, errorMessage: bridge.errorMessage)
             },
-            speak: { text in FloatingBarVoicePlaybackService.shared.speakOneShot(text) }
+            // Pass 3: read the user's cascade-specific voice-quality choice fresh
+            // on every turn (no caching, mirrors `PushToTalkManager
+            // .effectiveVoiceEngine()`'s pattern) rather than once at init time,
+            // so flipping the Settings row between turns takes effect immediately.
+            // `.system` gets the hard `speakOneShotSystemVoice` guarantee; `.neural`
+            // (the default) keeps Pass 2's `speakOneShot` behavior unchanged.
+            speak: { text in
+                let quality =
+                    CascadeVoiceQualitySelection.Quality(
+                        rawValue: UserDefaults.standard.string(forKey: "cascadeVoiceQuality") ?? "")
+                    ?? CascadeVoiceQualitySelection.defaultQuality
+                if CascadeVoiceQualitySelection.forcesSystemVoice(quality) {
+                    FloatingBarVoicePlaybackService.shared.speakOneShotSystemVoice(text)
+                } else {
+                    FloatingBarVoicePlaybackService.shared.speakOneShot(text)
+                }
+            }
         )
     }
 

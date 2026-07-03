@@ -348,6 +348,19 @@ final class FloatingBarVoicePlaybackService: NSObject, AVAudioPlayerDelegate, AV
     }
   }
 
+  /// Speak a short phrase forcing the system voice (`AVSpeechSynthesizer`),
+  /// bypassing whatever `ShortcutSettings.selectedVoiceID` currently resolves
+  /// to. Used by `SubscriptionCascadeCoordinator` when the user has picked
+  /// `CascadeVoiceQualitySelection.Quality.system` — a hard guarantee of zero
+  /// network TTS call for that turn, not just the common case (unlike
+  /// `speakOneShot`, this never reaches `APIClient.synthesizeSpeech`, so it
+  /// can never carry a forwarded BYOK key).
+  func speakOneShotSystemVoice(_ text: String) {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    enqueueSystemSpeech(trimmed)
+  }
+
   func interruptCurrentResponse() {
     if let currentResponseID {
       interruptedResponseID = currentResponseID

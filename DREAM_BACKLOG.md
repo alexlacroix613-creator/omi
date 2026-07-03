@@ -225,7 +225,7 @@ Legend: Value 5 = biggest win. Effort S = <1 file/hour, M = a few files, L = mul
   `system.start()` calls); if that ordering ever grows a meaningful async gap, the
   window constant would need revisiting too.
 
-### 8. ChatGPT-subscription realtime voice not wired
+### 8. [DONE — Passes 1–3 shipped; only live manual QA remains] ChatGPT-subscription realtime voice not wired
 - **Value 4 · Effort L · Risk Med** — known gap; Alex wants voice.
 - `VoiceProviderSelection.swift` + realtime hub. BYOK realtime + Deepgram exist
   (commit fc952e0b4) but a ChatGPT *subscription* (not API key) realtime path isn't
@@ -239,7 +239,8 @@ Legend: Value 5 = biggest win. Effort S = <1 file/hour, M = a few files, L = mul
   subscription **cascade** (on-device STT → `ChatProvider(.userChatGPT)` → TTS) that
   answers Alex's real want (voice on the ChatGPT plan he pays for, zero new API
   bill) using mature, already-shipped components. Split into Pass 1 (S) / Pass 2 (M)
-  / Pass 3 (S–M, optional neural TTS polish).
+  / Pass 3 (S, neural-TTS honesty) — ALL THREE NOW DONE; only the live manual QA
+  script (bottom of this item) is left before item 8 is fully closed.
 - **Pass 1 (S) done this iteration:** honesty + scaffolding, zero runtime behavior
   change.
   - `RealtimeOmniProvider.gptRealtime2.subtitle` (`Sources/RealtimeOmni/
@@ -350,10 +351,74 @@ Legend: Value 5 = biggest win. Effort S = <1 file/hour, M = a few files, L = mul
     confirm a spoken reply comes back and no floating-bar pill/window opened; then
     disconnect ChatGPT and confirm the row shows "Connect ChatGPT first" again and a
     PTT turn falls back to native realtime.
-  - **Pass 3 (S–M, optional polish, deferrable) still queued:** swap system `AVSpeech`
-    for the chunked neural-TTS backend `FloatingBarVoicePlaybackService` already
-    supports (the `.openAI` branch of `speakOneShot`), so the cascade voice sounds less
-    robotic. Independent of everything above; ship only if Alex wants nicer audio.
+- **Pass 3 (S) done this iteration — item 8 now fully closed except live manual QA.**
+  - **Surprise finding that reshaped the pass:** the design doc's Pass 3 framing
+    ("swap system `AVSpeech` for the chunked neural-TTS backend") was already true by
+    accident. Pass 2's speak leg calls `FloatingBarVoicePlaybackService.speakOneShot`,
+    which resolves `ShortcutSettings.selectedVoiceID` — and the app's shipped default
+    (`defaultVoiceID = openAIShimmerVoiceID`) is ALREADY an OpenAI **neural** voice
+    synthesized via `APIClient.synthesizeSpeech` (backend TTS proxy `v1/tts/synthesize`),
+    with automatic system-voice fallback baked into `speakOneShot`'s catch path and
+    `startPlayback(fallbackText:)`. All four selectable voices in
+    `ShortcutSettings.availableVoices` are OpenAI neural; that picker has no
+    system-voice option at all. So the literal "swap" had nothing to swap.
+  - **What reading the real wiring surfaced instead (the honest gap Pass 3 fixed):**
+    the neural leg rides `APIClient.buildHeaders`, which forwards the user's own BYOK
+    keys whenever `APIKeyService.isByokActive` (all four providers configured). A
+    full-BYOK user's own OpenAI key silently pays for cascade TTS — quietly
+    contradicting `chatGPTCascadeSubtitle`'s "no new OpenAI API bill" promise that
+    `VoiceEngineSelectionTests` treats as an invariant. Also noted: `speakOneShot`'s
+    neural path is single-shot (one synthesis call per reply, not the chunked
+    `updateStreamingResponseIfEnabled` pipeline) — fine for cascade v1 turn lengths.
+  - New pure `Sources/CascadeVoiceQualitySelection.swift` — `Quality` enum
+    (`system` / `neural`), `defaultQuality = .neural` (matches the app-wide default
+    sound), `forcesSystemVoice`, and `costSubtitle(quality:isByokActive:)` with
+    honest per-state copy: `.system` = always free, no network call (identical copy
+    under both BYOK states — it's an unconditional guarantee); `.neural` + BYOK
+    active = "may bill your own key"; `.neural` without BYOK = "no bill to you."
+    Mirrors `VoiceEngineSelection`'s no-I/O style.
+  - `FloatingBarVoicePlaybackService.speakOneShotSystemVoice(_:)` — new entry point
+    that forces `AVSpeechSynthesizer` and can never reach `APIClient.synthesizeSpeech`
+    (so it can never carry a forwarded BYOK key).
+  - `SubscriptionCascadeCoordinator.convenience init()` speak leg now reads the
+    persisted `cascadeVoiceQuality` fresh on every turn (no caching, same pattern as
+    `PushToTalkManager.effectiveVoiceEngine()`): `.system` → the hard
+    `speakOneShotSystemVoice` guarantee; `.neural` (default) → Pass 2's `speakOneShot`
+    byte-for-byte unchanged, including its built-in graceful fallback to system voice
+    when neural synthesis/playback fails or the backend is unreachable. The
+    injected-closure seam is untouched — all 20 coordinator tests run against fakes
+    exactly as before.
+  - Settings UI: new `voiceCascadeQualityRow` (`SettingsContentView+Advanced.swift`)
+    directly under `voiceEngineChatGPTCascadeRow` in the Voice Model card — minimal
+    "Voice quality (ChatGPT plan)" menu picker (System voice / Neural (when
+    available)) + cost subtitle driven by `CascadeVoiceQualitySelection.costSubtitle`
+    reading the real `APIKeyService.isByokActive` gate. New
+    `@AppStorage("cascadeVoiceQuality")` in `SettingsPage.swift`. Scoped to the
+    cascade engine only — `ShortcutSettings.selectedVoiceID` and every other
+    floating-bar voice reply are untouched.
+  - **Tests:** new `Tests/CascadeVoiceQualitySelectionTests.swift` (11/11) — enum
+    shape, default-is-neural, `forcesSystemVoice`, and the cost-copy invariants
+    (`.system` copy identical under both BYOK states; `.neural` copy differs by BYOK
+    state, mentions the user's own key when BYOK is active, promises "no bill" only
+    when that's true). Regression, all green this pass:
+    `SubscriptionCascadeCoordinatorTests` (20/20), `VoiceEngineSelectionTests`
+    (11/11), `VoiceProviderSelectionTests` (8/8), `PiMonoWiringTests` (24/24),
+    `BYOKPaywallTests` (9/9), `CodexAccountAuthTests` (7/7). 90/90 total across seven
+    suites, 0 failures; the full test target compiles clean (confirming the
+    `SettingsPage` / `SettingsContentView+Advanced` / playback-service edits build,
+    not just the pure files).
+  - **⚠️ MANUAL QA STILL REQUIRED — the one thing left open on item 8.** Nothing in
+    this item has ever been verified with a live session (dream-iteration guardrail:
+    no real codex login, no live network TTS). Script for whoever runs it next:
+    (1) connect ChatGPT in Advanced → AI Setup, tap "Use this" on the ChatGPT-plan
+    row, hold ⌥ and speak — confirm a spoken reply comes back (neural Shimmer voice
+    by default) and no floating-bar pill/window opened; (2) flip Voice quality to
+    "System voice", repeat — confirm the system voice speaks and NO
+    `v1/tts/synthesize` request fires (proxy/Console check); (3) with full BYOK
+    configured, confirm the neural subtitle warns about billing the user's own key;
+    (4) disconnect ChatGPT — row shows "Connect ChatGPT first" and a PTT turn falls
+    back to native realtime; (5) real mid-turn token expiry — "reconnect ChatGPT"
+    story, never silence.
 
 ---
 

@@ -295,6 +295,12 @@ struct SettingsContentView: View {
   /// native realtime instead of routing traffic through a dead engine.
   @AppStorage("voiceEngineSelection")
   var voiceEngineSelection: String = VoiceEngineSelection.Engine.nativeRealtimeBYOK.rawValue
+  /// DREAM_BACKLOG item 8 Pass 3 — voice-quality choice for the ChatGPT-subscription
+  /// cascade engine specifically (`CascadeVoiceQualitySelection.Quality`). Independent
+  /// of `ShortcutSettings.selectedVoiceID`, which every other floating-bar voice reply
+  /// still uses unchanged. Read fresh per-turn by `SubscriptionCascadeCoordinator`.
+  @AppStorage("cascadeVoiceQuality")
+  var cascadeVoiceQuality: String = CascadeVoiceQualitySelection.defaultQuality.rawValue
   @AppStorage("askModeEnabled") var askModeEnabled = false
   @AppStorage("claudeMdEnabled") var claudeMdEnabled = true
   @AppStorage("projectClaudeMdEnabled") var projectClaudeMdEnabled = true
