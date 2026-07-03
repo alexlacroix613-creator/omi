@@ -154,6 +154,11 @@ actor AgentBridge {
     env.removeValue(forKey: "ANTHROPIC_API_KEY")
     env.removeValue(forKey: "CLAUDE_CODE_USE_VERTEX")
 
+    if let openRouterKey = APIKeyService.currentOpenRouterKey {
+      env["OPENROUTER_API_KEY"] = openRouterKey
+      env["OMI_OPENROUTER_API_KEY"] = openRouterKey
+    }
+
     // Pass harness mode to bridge (acp or piMono)
     env["HARNESS_MODE"] = harnessMode
 

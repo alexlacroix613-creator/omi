@@ -48,9 +48,39 @@ enum BYOKProvider: String, CaseIterable {
         }
     }
 }
+
+enum ExternalAIAccountProvider: String, CaseIterable, Identifiable {
+    case claude
+    case chatgpt
+    case grok
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .claude: return "Claude"
+        case .chatgpt: return "ChatGPT"
+        case .grok: return "Grok"
+        }
+    }
+
+    var accountURL: URL {
+        switch self {
+        case .claude: return URL(string: "https://claude.ai")!
+        case .chatgpt: return URL(string: "https://chatgpt.com")!
+        case .grok: return URL(string: "https://grok.com")!
+        }
+    }
+
+    var statusStorageKey: String {
+        "external_ai_account_\(rawValue)_connected"
+    }
+}
+
 @MainActor
 final class APIKeyService: ObservableObject {
     static let shared = APIKeyService()
+    nonisolated static let openRouterStorageKey = "dev_openrouter_api_key"
 
     // Backend-provided keys (in-memory only, never persisted to disk)
     @Published private(set) var geminiApiKey: String?
@@ -163,6 +193,11 @@ final class APIKeyService: ObservableObject {
     nonisolated static var currentGeminiKey: String? {
         nonEmptyStatic(UserDefaults.standard.string(forKey: "dev_gemini_api_key"))
             ?? (getenv("GEMINI_API_KEY").flatMap { String(validatingUTF8: $0) })
+    }
+
+    nonisolated static var currentOpenRouterKey: String? {
+        nonEmptyStatic(UserDefaults.standard.string(forKey: openRouterStorageKey))
+            ?? (getenv("OPENROUTER_API_KEY").flatMap { String(validatingUTF8: $0) })
     }
 
     /// True when the app has enough configuration to start transcription and screen analysis.

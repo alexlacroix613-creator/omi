@@ -382,6 +382,9 @@ struct SettingsContentView: View {
   @AppStorage("dev_anthropic_api_key") private var devAnthropicKey: String = ""
   @AppStorage("dev_openai_api_key") private var devOpenAIKey: String = ""
   @AppStorage("dev_deepgram_api_key") private var devDeepgramKey: String = ""
+  @AppStorage("dev_openrouter_api_key") private var devOpenRouterKey: String = ""
+  @AppStorage("external_ai_account_chatgpt_connected") private var chatGPTAccountConnected = false
+  @AppStorage("external_ai_account_grok_connected") private var grokAccountConnected = false
   @State private var byokKeyStatuses: [BYOKProvider: BYOKValidator.Status] = [:]
   @State private var byokActivationError: String?
 
@@ -3442,6 +3445,10 @@ struct SettingsContentView: View {
         }
       }
 
+      aiAccountsCard
+
+      openRouterKeyCard(settingId: "aichat.openrouter")
+
       settingsCard(settingId: "aichat.provider") {
         VStack(alignment: .leading, spacing: 12) {
           HStack {
@@ -3688,6 +3695,207 @@ struct SettingsContentView: View {
             .foregroundColor(OmiColors.textTertiary)
         }
       }
+    }
+  }
+
+  private var aiAccountsCard: some View {
+    settingsCard(settingId: "aichat.accounts") {
+      VStack(alignment: .leading, spacing: 14) {
+        HStack(spacing: 10) {
+          Image(systemName: "person.crop.circle.badge.checkmark")
+            .scaledFont(size: 16)
+            .foregroundColor(OmiColors.textTertiary)
+
+          VStack(alignment: .leading, spacing: 3) {
+            Text("Member Accounts")
+              .scaledFont(size: 15, weight: .semibold)
+              .foregroundColor(OmiColors.textPrimary)
+            Text("Use paid consumer accounts where Omi has a local bridge or browser session.")
+              .scaledFont(size: 12)
+              .foregroundColor(OmiColors.textTertiary)
+          }
+
+          Spacer()
+        }
+
+        Divider()
+
+        aiAccountRow(
+          provider: .claude,
+          isConnected: chatProvider?.isClaudeConnected == true,
+          subtitle: "Claude account bridge for desktop chat.",
+          connectTitle: chatProvider?.isClaudeConnected == true ? "Reconnect" : "Connect",
+          connectAction: connectClaudeAccount,
+          disconnectAction: {
+            Task { await chatProvider?.disconnectClaude() }
+          }
+        )
+
+        Divider()
+
+        aiAccountRow(
+          provider: .chatgpt,
+          isConnected: chatGPTAccountConnected && !playwrightExtensionToken.isEmpty,
+          subtitle: playwrightExtensionToken.isEmpty
+            ? "Requires the browser extension to use your signed-in ChatGPT session."
+            : "Ready to use your signed-in ChatGPT browser session.",
+          connectTitle: "Connect",
+          connectAction: { connectBrowserAccount(.chatgpt) },
+          disconnectAction: { chatGPTAccountConnected = false }
+        )
+
+        Divider()
+
+        aiAccountRow(
+          provider: .grok,
+          isConnected: grokAccountConnected && !playwrightExtensionToken.isEmpty,
+          subtitle: playwrightExtensionToken.isEmpty
+            ? "Requires the browser extension to use your signed-in Grok session."
+            : "Ready to use your signed-in Grok browser session.",
+          connectTitle: "Connect",
+          connectAction: { connectBrowserAccount(.grok) },
+          disconnectAction: { grokAccountConnected = false }
+        )
+      }
+    }
+  }
+
+  private func aiAccountRow(
+    provider: ExternalAIAccountProvider,
+    isConnected: Bool,
+    subtitle: String,
+    connectTitle: String,
+    connectAction: @escaping () -> Void,
+    disconnectAction: @escaping () -> Void
+  ) -> some View {
+    HStack(spacing: 12) {
+      ConnectorBrandIcon(
+        brand: connectorBrand(for: provider),
+        size: 24,
+        cornerRadius: 6
+      )
+
+      VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: 6) {
+          Text(provider.displayName)
+            .scaledFont(size: 14, weight: .medium)
+            .foregroundColor(OmiColors.textPrimary)
+
+          if isConnected {
+            Text("Connected")
+              .scaledFont(size: 10, weight: .semibold)
+              .foregroundColor(OmiColors.success)
+          }
+        }
+
+        Text(subtitle)
+          .scaledFont(size: 12)
+          .foregroundColor(OmiColors.textTertiary)
+      }
+
+      Spacer()
+
+      if isConnected {
+        Button("Disconnect", action: disconnectAction)
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+      }
+
+      Button(connectTitle, action: connectAction)
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+    }
+  }
+
+  private func connectorBrand(for provider: ExternalAIAccountProvider) -> ConnectorBrand {
+    switch provider {
+    case .claude: return .claude
+    case .chatgpt: return .chatgpt
+    case .grok: return .x
+    }
+  }
+
+  private func connectClaudeAccount() {
+    chatBridgeMode = ChatProvider.BridgeMode.userClaude.rawValue
+    Task {
+      await chatProvider?.switchBridgeMode(to: .userClaude)
+      chatProvider?.checkClaudeConnectionStatus()
+      chatProvider?.startClaudeAuth()
+    }
+  }
+
+  private func connectBrowserAccount(_ provider: ExternalAIAccountProvider) {
+    playwrightUseExtension = true
+    if playwrightExtensionToken.isEmpty {
+      showBrowserSetup = true
+    } else {
+      switch provider {
+      case .chatgpt:
+        chatGPTAccountConnected = true
+      case .grok:
+        grokAccountConnected = true
+      case .claude:
+        break
+      }
+    }
+    NSWorkspace.shared.open(provider.accountURL)
+  }
+
+  private func openRouterKeyCard(settingId: String) -> some View {
+    settingsCard(settingId: settingId) {
+      VStack(alignment: .leading, spacing: 10) {
+        HStack(spacing: 10) {
+          Image(systemName: "network")
+            .scaledFont(size: 16)
+            .foregroundColor(OmiColors.textTertiary)
+
+          VStack(alignment: .leading, spacing: 3) {
+            Text("OpenRouter API Key")
+              .scaledFont(size: 14, weight: .medium)
+              .foregroundColor(OmiColors.textPrimary)
+            Text("Routes local agent and OpenRouter-backed model calls through your key.")
+              .scaledFont(size: 12)
+              .foregroundColor(OmiColors.textTertiary)
+          }
+
+          Spacer()
+
+          if !devOpenRouterKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Text("Configured")
+              .scaledFont(size: 11, weight: .semibold)
+              .foregroundColor(OmiColors.success)
+          }
+        }
+
+        HStack(spacing: 8) {
+          SecureField("sk-or-v1-...", text: $devOpenRouterKey)
+            .textFieldStyle(.roundedBorder)
+            .scaledFont(size: 13)
+            .onChange(of: devOpenRouterKey) { _, newValue in
+              applyOpenRouterKeyToEnvironment(newValue)
+            }
+
+          if !devOpenRouterKey.isEmpty {
+            Button("Clear") {
+              devOpenRouterKey = ""
+              applyOpenRouterKeyToEnvironment("")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+          }
+        }
+      }
+    }
+  }
+
+  private func applyOpenRouterKeyToEnvironment(_ value: String) {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty {
+      unsetenv("OPENROUTER_API_KEY")
+      unsetenv("OMI_OPENROUTER_API_KEY")
+    } else {
+      setenv("OPENROUTER_API_KEY", trimmed, 1)
+      setenv("OMI_OPENROUTER_API_KEY", trimmed, 1)
     }
   }
 
@@ -5508,6 +5716,8 @@ struct SettingsContentView: View {
   private var developerKeysSubsection: some View {
     VStack(spacing: 20) {
       byokStatusBanner
+
+      openRouterKeyCard(settingId: "advanced.devkeys.openrouter")
 
       developerKeyField(
         provider: .openai,
