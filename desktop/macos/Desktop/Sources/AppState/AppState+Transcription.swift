@@ -65,8 +65,10 @@ extension AppState {
       if useLocalSTT {
         log("Transcription: ON-DEVICE Parakeet mode (OMI_LOCAL_STT) — no cloud STT")
         // Segments are delivered on the main actor by the service, so no Task hop here.
+        // Routed through the cross-channel echo gate (handleLocalTranscriptionSegments), not
+        // straight to handleBackendSegments — see that method for why.
         let onLocalSegments: LocalTranscriptionService.SegmentsHandler = { [weak self] segments in
-          self?.handleBackendSegments(segments)
+          self?.handleLocalTranscriptionSegments(segments)
         }
         // If the on-device model can't load, fall back to cloud STT instead of recording
         // into a void (the failure is otherwise silent — a blank transcript).
@@ -75,8 +77,10 @@ extension AppState {
         }
         // Mic = the user; system audio = another speaker. Transcribed separately for diarization.
         // Music filter (default on) skips music/singing windows on both channels so songs played
-        // out loud (mic) or streamed from other apps (system) don't become conversations.
+        // out loud (mic) or streamed from other apps (system) don't become conversations. Fresh
+        // echo-gate state per session so a prior conversation's segments never suppress this one.
         let filterMusic = AssistantSettings.shared.filterMusicFromConversations
+        crossChannelEchoGate = CrossChannelEchoGate()
         let mic = LocalTranscriptionService(language: effectiveLanguage, isUser: true, filterMusic: filterMusic)
         mic.start(onSegments: onLocalSegments, onModelLoadFailed: onModelLoadFailed)
         localMicService = mic
@@ -931,9 +935,12 @@ extension AppState {
         // conversation — do NOT reconnect the cloud WebSocket. Stopping the old ones flushes
         // their final tails; the source-routed capture callbacks feed the new instances.
         let onLocalSegments: LocalTranscriptionService.SegmentsHandler = { [weak self] segments in
-          self?.handleBackendSegments(segments)
+          self?.handleLocalTranscriptionSegments(segments)
         }
         let filterMusic = AssistantSettings.shared.filterMusicFromConversations
+        // Fresh echo-gate state for the next conversation — see the first startTranscription()
+        // call site for why this isn't shared across the rotation boundary.
+        crossChannelEchoGate = CrossChannelEchoGate()
         let mic = LocalTranscriptionService(language: effectiveLanguage, isUser: true, filterMusic: filterMusic)
         mic.start(onSegments: onLocalSegments)
         localMicService = mic

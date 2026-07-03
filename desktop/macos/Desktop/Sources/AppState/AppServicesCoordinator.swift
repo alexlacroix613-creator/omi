@@ -11,6 +11,10 @@ final class AppServicesCoordinator {
   var vadGateService: VADGateService?
   var localMicService: LocalTranscriptionService?
   var localSystemService: LocalTranscriptionService?
+  /// Cross-channel echo state for the current on-device recording session — recent system-channel
+  /// segments the mic channel is checked against. Reset (fresh instance) whenever mic/system are
+  /// re-armed, so echo state never leaks across conversations.
+  var crossChannelEchoGate: CrossChannelEchoGate?
 
   var maxRecordingTimer: Timer?
   var notificationHealthTimer: Timer?

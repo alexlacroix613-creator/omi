@@ -162,13 +162,68 @@ Legend: Value 5 = biggest win. Effort S = <1 file/hour, M = a few files, L = mul
 - Tests: `BYOKPaywallTests` (9/9), `PiMonoWiringTests` (24/24, including the fixed
   assertion), `StartupWarmupPolicyTests` (35/35) — 68/68 total, 0 failures.
 
-### 7. Rap slips the music filter (documented honest limitation)
+### 7. [DONE this iteration] Rap slips the music filter (documented honest limitation)
 - **Value 3 · Effort M · Risk Med**
-- The mic-channel music filter (commit 133e28c0b, `MusicFilterGate`) still lets rap
-  through because rap's speech-like cadence reads as conversation. Covered by
-  `MusicFilterGateTests`.
-- Fix: add a rap-specific heuristic (beat/BPM + repetition detection) or a second-pass
-  classifier; expand test fixtures. Medium risk of false-positives muting real speech.
+- Was: the mic-channel music filter (commit 133e28c0b, `MusicFilterGate`) still let rap
+  through because rap's speech-like cadence reads as conversation to Apple's
+  SoundAnalysis classifier — the commit message named the cross-channel duplicate-text
+  heuristic as the deferred proper fix for this residue.
+- Built: `Sources/CrossChannelEchoGate.swift` — a pure, mutating `struct` (no wall
+  clock inside; every method takes the segment's own `start`/`end` audio-time offsets,
+  which are comparable across the mic and system `LocalTranscriptionService` instances
+  because both start recording within milliseconds of each other on the same 10s
+  window). `recordSystemSegment(text:start:end:)` remembers recent system-channel
+  utterances (source of truth, never suppressed); `shouldSuppressMic(text:start:end:)`
+  flags a mic segment as an echo when it substantially duplicates one of them. Design
+  decisions, all named constants on the type: normalized-text **Jaccard token-overlap
+  similarity** (lowercase, strip punctuation, collapse whitespace, then
+  `|intersection|/|union|` of the token sets) — chosen over edit-distance for
+  simplicity/explainability per the brief; **`similarityThreshold = 0.6`** (tolerates
+  the mic's independent ASR decode of the same audio diverging by a word or two, e.g.
+  room reverb, while still requiring most words to match — a topically-related but
+  genuinely different reply won't cross it); **`windowSeconds = 6.0`** (covers
+  window-boundary drift between the two independently-flushing 10s channels plus the
+  ~0-2s an echo takes to travel speaker → mic → decode; also the pruning horizon for
+  old system entries — same "first-pass guess, tune later" honesty as
+  `AgentStallNarration`'s thresholds); **`minTokenCount = 4`**, applied to BOTH sides
+  of the comparison — the false-positive guard from the brief ("yeah"/"yeah" must never
+  suppress real short replies).
+- Wired into the SAME "Filter Music From Conversations" toggle
+  (`AssistantSettings.shared.filterMusicFromConversations`) that gates `MusicFilterGate`
+  — reused rather than adding a second toggle, since this is that feature's own
+  documented follow-up, not a separate concern. New `AppState.handleLocalTranscriptionSegments(_:)`
+  (`Sources/AppState/AppState+ListenEvents.swift`) is the integration point: both
+  on-device mic+system `LocalTranscriptionService` instances now deliver through it
+  (previously straight to `handleBackendSegments`, both call sites in
+  `AppState+Transcription.swift` — initial `startTranscription()` and the 4-hour
+  rotation re-arm). It records every system-channel segment into a per-session
+  `AppState.crossChannelEchoGate` (new property on `AppServicesCoordinator`, reset to a
+  fresh instance at both call sites so echo state never leaks across conversations),
+  drops a mic-channel segment when the gate flags it (logged, never persisted/counted),
+  and always keeps + forwards the system channel untouched — structurally there is no
+  code path that can suppress a system segment. The cloud STT path
+  (`transcriptionService`, server-side diarization) is untouched — this only applies to
+  the on-device Parakeet path where the commit's honest-limitation note lives.
+- Tests: `Tests/CrossChannelEchoGateTests.swift` (25/25) — exact/near-exact duplicate
+  suppressed (incl. one dropped word simulating ASR divergence), case/punctuation
+  insensitivity, paraphrase and unrelated speech kept, short-utterance guard on both
+  the mic AND system side (incl. the exact `minTokenCount` boundary), window-boundary
+  inclusive/exclusive edges, stale-entry pruning, multiple tracked system segments (not
+  just the latest), and the pure helpers (`timeGap`, `normalize`, `tokens`,
+  `jaccardSimilarity`) directly. `MusicFilterGateTests` (7/7) still pass unchanged, and
+  the full `Omi ComputerPackageTests` target builds clean (validates the `AppState` /
+  `AppServicesCoordinator` wiring compiles, not just the pure gate in isolation).
+- Residual risk (honest): the "sys channel never suppressed" guarantee is enforced
+  structurally in `handleLocalTranscriptionSegments` (no suppression branch exists for
+  `!segment.is_user`), not by a dedicated integration test — `AppState` isn't
+  practically unit-testable here (MainActor, live services), matching how prior items
+  (3, 4) left UI/AppState wiring untested while covering the pure logic fully. The
+  0.6/6.0/4 constants are first-pass judgment calls, not tuned against real dual-channel
+  rap logs — flag for revisit once real "mic re-hears speaker" recordings exist.
+  `windowSeconds=6.0` assumes mic and system start within ~milliseconds of each other
+  (true today per `AppState+Transcription.swift`'s sequential `mic.start()` /
+  `system.start()` calls); if that ordering ever grows a meaningful async gap, the
+  window constant would need revisiting too.
 
 ### 8. ChatGPT-subscription realtime voice not wired
 - **Value 4 · Effort L · Risk Med** — known gap; Alex wants voice.

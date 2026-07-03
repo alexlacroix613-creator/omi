@@ -292,6 +292,10 @@ class AppState: ObservableObject {
     get { servicesCoordinator.localSystemService }
     set { servicesCoordinator.localSystemService = newValue }
   }
+  var crossChannelEchoGate: CrossChannelEchoGate? {
+    get { servicesCoordinator.crossChannelEchoGate }
+    set { servicesCoordinator.crossChannelEchoGate = newValue }
+  }
   var useLocalSTT = false
   var sttFallbackInProgress = false
   var forceCloudSTTForSession = false

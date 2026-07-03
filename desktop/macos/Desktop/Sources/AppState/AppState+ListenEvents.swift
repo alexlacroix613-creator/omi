@@ -5,6 +5,46 @@ import UserNotifications
 
 @MainActor
 extension AppState {
+  /// Entry point for locally-transcribed (on-device Parakeet) segments from BOTH the mic and system
+  /// channels — the two `LocalTranscriptionService` instances started in `startTranscription()` /
+  /// the 4-hour rotation both deliver here. Applies the cross-channel echo gate: when "Filter music
+  /// from conversations" is on, a mic-channel segment that substantially duplicates a recent
+  /// system-channel segment is dropped as the mic re-hearing the Mac's own playback (e.g. rap that
+  /// slipped past the SoundAnalysis music/speech classifier — the honest limitation documented in
+  /// commit 133e28c0b) rather than a real utterance. The system channel is always kept and never
+  /// suppressed. Surviving segments continue into the shared `handleBackendSegments` pipeline
+  /// unchanged. Not used by the cloud STT path, which has its own server-side diarization.
+  func handleLocalTranscriptionSegments(_ segments: [TranscriptionService.BackendSegment]) {
+    guard AssistantSettings.shared.filterMusicFromConversations else {
+      handleBackendSegments(segments)
+      return
+    }
+
+    var gate = crossChannelEchoGate ?? CrossChannelEchoGate()
+    var kept: [TranscriptionService.BackendSegment] = []
+    kept.reserveCapacity(segments.count)
+    for segment in segments {
+      guard !segment.text.isEmpty else { continue }
+      if segment.is_user {
+        // Mic channel: may be an echo of something the system channel just captured.
+        if gate.shouldSuppressMic(text: segment.text, start: segment.start, end: segment.end) {
+          log(
+            "Transcription: Dropped mic segment as cross-channel echo (rap/music slipped the filter): \(segment.text.prefix(80))"
+          )
+          continue
+        }
+      } else {
+        // System channel: source of truth — always kept, and remembered for later mic checks.
+        gate.recordSystemSegment(text: segment.text, start: segment.start, end: segment.end)
+      }
+      kept.append(segment)
+    }
+    crossChannelEchoGate = gate
+
+    guard !kept.isEmpty else { return }
+    handleBackendSegments(kept)
+  }
+
   func handleBackendSegments(_ segments: [TranscriptionService.BackendSegment]) {
     for segment in segments {
       guard !segment.text.isEmpty else { continue }
