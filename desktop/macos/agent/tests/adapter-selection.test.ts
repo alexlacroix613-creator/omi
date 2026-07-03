@@ -57,7 +57,7 @@ describe("adapter selection and activation", () => {
     expect(adapterProfile("codex")).toMatchObject({
       adapterId: "codex",
       activationEnv: undefined,
-      capabilities: { supportsTools: false, supportsModelSwitching: false },
+      capabilities: { supportsTools: true, supportsModelSwitching: false },
     });
     expect(adapterActivationError("hermes")).toBe(
       "Hermes is not available. Make sure Hermes is installed first, then try again."

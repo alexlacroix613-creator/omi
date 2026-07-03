@@ -267,7 +267,7 @@ export const ADAPTER_CAPABILITY_MATRIX = {
       pinnedWorker: required("Codex keeps session state in the adapter process and must stay worker-pinned while active."),
       modelSwitching: unsupported("Codex model ids differ from Omi's Claude aliases; model selection is configured in Codex itself, not via session/set_model here."),
       artifactEmission: unsupported("Codex ACP adapter does not emit artifact references yet."),
-      toolSupport: unsupported("Codex ACP advertises mcpCapabilities.acp:false; per-session Omi MCP tools are not passed through yet. Codex uses its own built-in coding tools."),
+      toolSupport: required("Codex ACP advertises mcpCapabilities.http:true; Omi tools are passed as a loopback bearer-token HTTP MCP server in session/new. Codex also keeps its own built-in coding tools."),
       restartOrphanSemantics: required("Startup reconciliation orphans active attempts and marks process-local Codex bindings stale."),
     },
   },

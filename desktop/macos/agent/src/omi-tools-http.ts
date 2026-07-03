@@ -1,315 +1,339 @@
 /**
- * HTTP-based MCP server that exposes omi tools (execute_sql, semantic_search)
- * to the ACP agent. Tool calls are forwarded to Swift via stdout using the
- * same protocol as agent-bridge.
+ * Localhost HTTP MCP server that exposes Omi's tools (memories, screen history,
+ * tasks, SQL, semantic search, …) to ACP agents that accept MCP servers over
+ * the HTTP transport but reject command/stdio configs spawned under their own
+ * sandbox.
  *
- * This replaces the Agent SDK's createSdkMcpServer() with a standalone HTTP
- * server that ACP can connect to via its HTTP MCP transport.
+ * This is the path used by the Codex/ChatGPT adapter: `@agentclientprotocol/
+ * codex-acp` advertises `mcpCapabilities.http:true` and maps an HTTP MCP entry
+ * to `{ url, http_headers }` in the Codex session config, while the Claude ACP
+ * adapter uses the command/stdio server (`omi-tools-stdio.ts`) instead.
+ *
+ * Design:
+ * - Runs IN the bridge process (index.ts), bound to 127.0.0.1 on an ephemeral
+ *   port. Never listens on a routable interface.
+ * - Every request must carry `Authorization: Bearer <token>` with a random
+ *   per-run token. Requests without the exact token get 401 and never reach a
+ *   tool. The token and URL are never logged.
+ * - Tool definitions come from the canonical manifest (single source of truth,
+ *   shared with the stdio server).
+ * - Tool CALLS are forwarded to Swift by connecting to the same Unix-socket
+ *   relay the stdio server uses (`OMI_BRIDGE_PIPE`). That reuses the bridge's
+ *   existing tool correlation, control-tool handling, and Swift forwarding
+ *   verbatim — this file adds only the HTTP transport + auth on top.
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
-import type { ToolUseMessage, ToolResultMessage } from "./protocol.js";
+import { createConnection, type Socket } from "net";
+import { randomBytes, timingSafeEqual } from "crypto";
+import {
+  mcpToolDefinitionsForAdapter,
+  normalizeOmiToolName,
+} from "./runtime/omi-tool-manifest.js";
 
-// Current query mode — set before each query
-let currentMode: "ask" | "act" = "act";
-
-export function setQueryMode(mode: "ask" | "act"): void {
-  currentMode = mode;
+export interface OmiToolsHttpServerOptions {
+  /** Path to the bridge's omi-tools Unix-socket relay (OMI_BRIDGE_PIPE). */
+  bridgePipePath: string;
+  /** Adapter id used for tool-call correlation on the relay (e.g. "codex"). */
+  adapterId: string;
+  /** Optional structured logger. Must never receive the token or URL. */
+  log?: (message: string) => void;
 }
 
-// Pending tool call promises — resolved when Swift sends back results
-const pendingToolCalls = new Map<
-  string,
-  { resolve: (result: string) => void }
->();
-
-let callIdCounter = 0;
-
-function nextCallId(): string {
-  return `omi-${++callIdCounter}-${Date.now()}`;
+export interface OmiToolsHttpServerHandle {
+  /** Loopback URL to hand to the ACP agent's session/new mcpServers entry. */
+  readonly url: string;
+  /** Random bearer token required on every request. */
+  readonly token: string;
+  /** Update the ask/act mode used for write-gating (call per query). */
+  setMode(mode: "ask" | "act"): void;
+  /** Shut the server and relay connection down. */
+  close(): Promise<void>;
 }
 
-/** Send a JSON line to stdout (back to Swift) */
-function sendToSwift(msg: ToolUseMessage): void {
-  try {
-    process.stdout.write(JSON.stringify(msg) + "\n");
-  } catch (err) {
-    process.stderr.write(`[agent] Failed to write to stdout: ${err}\n`);
-  }
-}
+const TOOL_CALL_TIMEOUT_MS = 120_000;
 
 /**
- * Request tool execution from Swift and wait for the result.
+ * Start the HTTP MCP server. Resolves once it is listening on loopback.
  */
-async function requestSwiftTool(
-  name: string,
-  input: Record<string, unknown>
-): Promise<string> {
-  const callId = nextCallId();
+export async function startOmiToolsHttpServer(
+  options: OmiToolsHttpServerOptions
+): Promise<OmiToolsHttpServerHandle> {
+  const log = options.log ?? (() => {});
+  const adapterId = options.adapterId;
+  const token = randomBytes(32).toString("hex");
+  const expectedAuth = Buffer.from(`Bearer ${token}`);
 
-  return new Promise<string>((resolve) => {
-    pendingToolCalls.set(callId, { resolve });
-    sendToSwift({ type: "tool_use", callId, name, input });
-  });
-}
+  let currentMode: "ask" | "act" = "act";
 
-/** Resolve a pending tool call with a result from Swift */
-export function resolveToolCall(msg: ToolResultMessage): void {
-  const pending = pendingToolCalls.get(msg.callId);
-  if (pending) {
-    pending.resolve(msg.result);
-    pendingToolCalls.delete(msg.callId);
-  } else {
-    process.stderr.write(
-      `Warning: no pending tool call for callId=${msg.callId}\n`
-    );
-  }
-}
+  // Non-onboarding tool projection — codex sessions are never onboarding.
+  const TOOLS = mcpToolDefinitionsForAdapter("omi-tools-stdio", {});
 
-// MCP tool definitions
-const TOOLS = [
-  {
-    name: "execute_sql",
-    description: `Run SQL on the local omi.db database.
-Supports: SELECT, INSERT, UPDATE, DELETE.
-SELECT auto-limits to 200 rows. UPDATE/DELETE require WHERE. DROP/ALTER/CREATE blocked.
-Use for: app usage stats, time queries, task management, aggregations, anything structured.`,
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "SQL query to execute" },
-      },
-      required: ["query"],
-    },
-  },
-  {
-    name: "semantic_search",
-    description: `Vector similarity search on screen history.
-Use for: fuzzy conceptual queries where exact SQL keywords won't work.
-e.g. "reading about machine learning", "working on design mockups"`,
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description: "Natural language search query",
-        },
-        days: {
-          type: "number",
-          description: "Number of days to search back (default: 7)",
-        },
-        app_filter: {
-          type: "string",
-          description: "Filter results to a specific app name",
-        },
-      },
-      required: ["query"],
-    },
-  },
-  {
-    name: "complete_task",
-    description: `Toggle a task's completion status. Syncs to backend (Firestore).
-Use after finding the task with execute_sql. Pass the backendId from the action_items table.`,
-    inputSchema: {
-      type: "object",
-      properties: {
-        task_id: {
-          type: "string",
-          description: "The backendId of the task from action_items table",
-        },
-      },
-      required: ["task_id"],
-    },
-  },
-  {
-    name: "delete_task",
-    description: `Delete a task permanently. Syncs to backend (Firestore).
-Use after finding the task with execute_sql. Pass the backendId from the action_items table.`,
-    inputSchema: {
-      type: "object",
-      properties: {
-        task_id: {
-          type: "string",
-          description: "The backendId of the task from action_items table",
-        },
-      },
-      required: ["task_id"],
-    },
-  },
-];
+  // --- Relay client (forward tool calls to Swift via the bridge relay) ---
 
-/** Handle a JSON-RPC request */
-async function handleJsonRpc(
-  body: Record<string, unknown>
-): Promise<Record<string, unknown>> {
-  const id = body.id;
-  const method = body.method as string;
-  const params = (body.params ?? {}) as Record<string, unknown>;
+  const pendingToolCalls = new Map<
+    string,
+    { resolve: (result: string) => void; timeout: ReturnType<typeof setTimeout> }
+  >();
+  let callIdCounter = 0;
+  let relay: Socket | null = null;
+  let relayBuffer = "";
+  let closed = false;
 
-  switch (method) {
-    case "initialize":
-      return {
-        jsonrpc: "2.0",
-        id,
-        result: {
-          protocolVersion: "2024-11-05",
-          capabilities: { tools: {} },
-          serverInfo: { name: "omi-tools", version: "1.0.0" },
-        },
-      };
-
-    case "notifications/initialized":
-      // No response needed for notifications
-      return { jsonrpc: "2.0", id, result: {} };
-
-    case "tools/list":
-      return {
-        jsonrpc: "2.0",
-        id,
-        result: { tools: TOOLS },
-      };
-
-    case "tools/call": {
-      const toolName = params.name as string;
-      const args = (params.arguments ?? {}) as Record<string, unknown>;
-
-      if (toolName === "execute_sql") {
-        const query = args.query as string;
-        // In ask mode, only allow SELECT queries
-        if (currentMode === "ask") {
-          const normalized = query.trim().toUpperCase();
-          if (!normalized.startsWith("SELECT")) {
-            return {
-              jsonrpc: "2.0",
-              id,
-              result: {
-                content: [
-                  {
-                    type: "text",
-                    text: "Blocked: Only SELECT queries are allowed in Ask mode. Switch to Act mode to run UPDATE/INSERT/DELETE.",
-                  },
-                ],
-              },
-            };
+  const connectRelay = (): void => {
+    if (closed) return;
+    const socket = createConnection(options.bridgePipePath, () => {
+      log("omi-tools HTTP relay connected");
+    });
+    relay = socket;
+    socket.on("data", (data: Buffer) => {
+      relayBuffer += data.toString();
+      let idx: number;
+      while ((idx = relayBuffer.indexOf("\n")) >= 0) {
+        const line = relayBuffer.slice(0, idx);
+        relayBuffer = relayBuffer.slice(idx + 1);
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line) as {
+            type?: string;
+            callId?: string;
+            result?: string;
+          };
+          if (msg.type === "tool_result" && msg.callId) {
+            const pending = pendingToolCalls.get(msg.callId);
+            if (pending) {
+              pendingToolCalls.delete(msg.callId);
+              clearTimeout(pending.timeout);
+              pending.resolve(msg.result ?? "");
+            }
           }
+        } catch {
+          log("omi-tools HTTP relay: failed to parse relay line");
         }
-        const result = await requestSwiftTool("execute_sql", { query });
-        return {
-          jsonrpc: "2.0",
-          id,
-          result: { content: [{ type: "text", text: result }] },
-        };
       }
-
-      if (toolName === "semantic_search") {
-        const input: Record<string, unknown> = {
-          query: args.query,
-          days: args.days ?? 7,
-        };
-        if (args.app_filter) input.app_filter = args.app_filter;
-        const result = await requestSwiftTool("semantic_search", input);
-        return {
-          jsonrpc: "2.0",
-          id,
-          result: { content: [{ type: "text", text: result }] },
-        };
+    });
+    socket.on("error", (err) => {
+      log(`omi-tools HTTP relay error: ${err.message}`);
+    });
+    socket.on("close", () => {
+      relay = null;
+      // Fail any in-flight calls so HTTP requests don't hang forever.
+      for (const [callId, pending] of pendingToolCalls) {
+        pendingToolCalls.delete(callId);
+        clearTimeout(pending.timeout);
+        pending.resolve("Error: omi-tools relay disconnected");
       }
-
-      if (toolName === "complete_task") {
-        const taskId = args.task_id as string;
-        const result = await requestSwiftTool("complete_task", { task_id: taskId });
-        return {
-          jsonrpc: "2.0",
-          id,
-          result: { content: [{ type: "text", text: result }] },
-        };
+      if (!closed) {
+        // Reconnect lazily on the next tool call rather than hot-looping here.
       }
+    });
+  };
 
-      if (toolName === "delete_task") {
-        const taskId = args.task_id as string;
-        const result = await requestSwiftTool("delete_task", { task_id: taskId });
-        return {
-          jsonrpc: "2.0",
-          id,
-          result: { content: [{ type: "text", text: result }] },
-        };
+  const ensureRelay = (): Socket => {
+    if (!relay || relay.destroyed) {
+      connectRelay();
+    }
+    return relay!;
+  };
+
+  const forwardTool = (
+    name: string,
+    input: Record<string, unknown>
+  ): Promise<string> => {
+    const callId = `omi-http-${++callIdCounter}-${Date.now()}`;
+    return new Promise<string>((resolve) => {
+      const socket = ensureRelay();
+      if (!socket) {
+        resolve("Error: omi-tools relay unavailable");
+        return;
       }
+      const timeout = setTimeout(() => {
+        if (pendingToolCalls.delete(callId)) {
+          resolve("Error: timed out waiting for tool result");
+        }
+      }, TOOL_CALL_TIMEOUT_MS);
+      pendingToolCalls.set(callId, { resolve, timeout });
+      try {
+        // No requestId/clientId/protocolVersion: the relay resolves the active
+        // request for this adapter via adapter-scoped correlation.
+        socket.write(
+          JSON.stringify({ type: "tool_use", callId, name, input, adapterId }) + "\n"
+        );
+      } catch (err) {
+        if (pendingToolCalls.delete(callId)) {
+          clearTimeout(timeout);
+          resolve(`Error: failed to dispatch tool call: ${err}`);
+        }
+      }
+    });
+  };
 
+  // --- JSON-RPC (MCP) handling ---
+
+  const textResult = (id: unknown, text: string): Record<string, unknown> => ({
+    jsonrpc: "2.0",
+    id,
+    result: { content: [{ type: "text", text }] },
+  });
+
+  const handleToolCall = async (
+    id: unknown,
+    params: Record<string, unknown>
+  ): Promise<Record<string, unknown>> => {
+    const rawName = params.name as string;
+    const { canonicalName } = normalizeOmiToolName("omi-tools-stdio", rawName);
+    const args = (params.arguments ?? {}) as Record<string, unknown>;
+
+    const advertised = TOOLS.some((tool) => tool.name === canonicalName);
+    if (!advertised) {
       return {
         jsonrpc: "2.0",
         id,
-        error: { code: -32601, message: `Unknown tool: ${toolName}` },
+        error: { code: -32601, message: `Unknown tool: ${rawName}` },
       };
     }
 
-    default:
-      return {
-        jsonrpc: "2.0",
-        id,
-        error: { code: -32601, message: `Method not found: ${method}` },
-      };
-  }
-}
-
-/** Read full request body */
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let data = "";
-    req.on("data", (chunk: Buffer) => {
-      data += chunk.toString();
-    });
-    req.on("end", () => resolve(data));
-    req.on("error", reject);
-  });
-}
-
-/**
- * Start the HTTP MCP server on a random localhost port.
- * Returns the URL to connect to.
- */
-export async function startOmiToolsServer(): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const server = createServer(
-      async (req: IncomingMessage, res: ServerResponse) => {
-        // Handle MCP Streamable HTTP transport
-        if (req.method === "POST") {
-          try {
-            const body = await readBody(req);
-            const parsed = JSON.parse(body) as Record<string, unknown>;
-            const result = await handleJsonRpc(parsed);
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(result));
-          } catch (err) {
-            res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(
-              JSON.stringify({
-                jsonrpc: "2.0",
-                error: { code: -32700, message: "Parse error" },
-              })
-            );
-          }
-        } else if (req.method === "GET") {
-          // Health check / SSE endpoint (not used but keep for compatibility)
-          res.writeHead(200, { "Content-Type": "text/plain" });
-          res.end("omi-tools MCP server");
-        } else {
-          res.writeHead(405);
-          res.end();
-        }
+    // Write-gate: in ask mode only SELECT SQL is permitted, mirroring the
+    // stdio server so the HTTP path is not a way around read-only mode.
+    if (canonicalName === "execute_sql" && currentMode === "ask") {
+      const query = String(args.query ?? "").trim().toUpperCase();
+      if (!query.startsWith("SELECT")) {
+        return textResult(
+          id,
+          "Blocked: Only SELECT queries are allowed in Ask mode. Switch to Act mode to run UPDATE/INSERT/DELETE."
+        );
       }
-    );
+    }
 
+    const result = await forwardTool(canonicalName, args);
+    return textResult(id, result);
+  };
+
+  const handleJsonRpc = async (
+    body: Record<string, unknown>
+  ): Promise<Record<string, unknown> | null> => {
+    const id = body.id;
+    const method = body.method as string;
+    const params = (body.params ?? {}) as Record<string, unknown>;
+    const isNotification = id === undefined || id === null;
+
+    switch (method) {
+      case "initialize":
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            protocolVersion: "2024-11-05",
+            capabilities: { tools: {} },
+            serverInfo: { name: "omi-tools", version: "1.0.0" },
+          },
+        };
+      case "notifications/initialized":
+        return null; // notification — no response body
+      case "tools/list":
+        return { jsonrpc: "2.0", id, result: { tools: TOOLS } };
+      case "tools/call":
+        return handleToolCall(id, params);
+      default:
+        if (isNotification) return null;
+        return {
+          jsonrpc: "2.0",
+          id,
+          error: { code: -32601, message: `Method not found: ${method}` },
+        };
+    }
+  };
+
+  // --- HTTP transport ---
+
+  const readBody = (req: IncomingMessage): Promise<string> =>
+    new Promise((resolve, reject) => {
+      let data = "";
+      req.on("data", (chunk: Buffer) => {
+        data += chunk.toString();
+      });
+      req.on("end", () => resolve(data));
+      req.on("error", reject);
+    });
+
+  const authorized = (req: IncomingMessage): boolean => {
+    const header = req.headers["authorization"];
+    if (typeof header !== "string") return false;
+    const provided = Buffer.from(header);
+    if (provided.length !== expectedAuth.length) return false;
+    return timingSafeEqual(provided, expectedAuth);
+  };
+
+  const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    if (!authorized(req)) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message: "Unauthorized" } }));
+      return;
+    }
+
+    if (req.method === "POST") {
+      try {
+        const body = await readBody(req);
+        const parsed = JSON.parse(body) as Record<string, unknown>;
+        const result = await handleJsonRpc(parsed);
+        if (result === null) {
+          res.writeHead(202);
+          res.end();
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error" } }));
+      }
+      return;
+    }
+
+    if (req.method === "GET") {
+      // Some MCP HTTP clients open a GET stream for server→client messages.
+      // This server is request/response only, so decline the stream cleanly.
+      res.writeHead(405, { Allow: "POST" });
+      res.end();
+      return;
+    }
+
+    res.writeHead(405, { Allow: "POST" });
+    res.end();
+  });
+
+  connectRelay();
+
+  const url = await new Promise<string>((resolve, reject) => {
+    server.on("error", reject);
     server.listen(0, "127.0.0.1", () => {
       const addr = server.address();
       if (addr && typeof addr === "object") {
-        const url = `http://127.0.0.1:${addr.port}/`;
-        process.stderr.write(`[agent] omi-tools HTTP MCP server on ${url}\n`);
-        resolve(url);
+        resolve(`http://127.0.0.1:${addr.port}/`);
       } else {
-        reject(new Error("Failed to get server address"));
+        reject(new Error("Failed to resolve omi-tools HTTP server address"));
       }
     });
-
-    server.on("error", reject);
   });
+
+  log("omi-tools HTTP MCP server listening on loopback");
+
+  return {
+    url,
+    token,
+    setMode(mode: "ask" | "act") {
+      currentMode = mode;
+    },
+    async close() {
+      closed = true;
+      for (const [callId, pending] of pendingToolCalls) {
+        pendingToolCalls.delete(callId);
+        clearTimeout(pending.timeout);
+        pending.resolve("Error: omi-tools HTTP server closed");
+      }
+      relay?.destroy();
+      relay = null;
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
 }
