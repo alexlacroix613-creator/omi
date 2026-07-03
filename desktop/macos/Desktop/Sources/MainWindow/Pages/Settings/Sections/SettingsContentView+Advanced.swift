@@ -115,8 +115,14 @@ extension SettingsContentView {
               .scaledFont(size: 12)
               .foregroundColor(OmiColors.textTertiary)
           }
+
+          Divider()
+
+          realtimeVoiceKeyField
         }
       }
+
+      voiceTranscriptionCard
 
       aiAccountsCard
 
@@ -949,6 +955,155 @@ extension SettingsContentView {
     } else {
       setenv("OPENROUTER_API_KEY", trimmed, 1)
       setenv("OMI_OPENROUTER_API_KEY", trimmed, 1)
+    }
+  }
+
+  // MARK: - Voice Model bring-your-own-key (realtime, multimodal)
+
+  /// Bring-your-own-key field for the Voice Model picker, shown inside that card.
+  /// The picker's Auto/Gemini/GPT choice is resolved to the concrete model the hub
+  /// will actually connect, and a key field for THAT provider is surfaced:
+  ///   • Gemini 3.1 Flash Live → your Google Gemini key (`dev_gemini_api_key`)
+  ///   • GPT Realtime 2       → your OpenAI key (`dev_openai_api_key`)
+  /// When a key is set, RealtimeHubController.ensureWarm connects client-direct with
+  /// it (Omi never sees it). When blank, managed users connect via an Omi-minted
+  /// ephemeral token. These are the SAME keys as the free-plan Developer keys.
+  @ViewBuilder
+  var realtimeVoiceKeyField: some View {
+    let effectiveRaw = RealtimeOmniSettings.shared.effectiveProvider.rawValue
+    let providerName = VoiceProviderSelection.realtimeProviderDisplayName(forModel: effectiveRaw)
+    let usesOpenAI =
+      VoiceProviderSelection.realtimeKeyStorageKey(forModel: effectiveRaw)
+      == BYOKProvider.openai.storageKey
+    let keyBinding = usesOpenAI ? $devOpenAIKey : $devGeminiKey
+    let hasKey = VoiceProviderSelection.realtimeUsesOwnKey(
+      hasProviderKey: !keyBinding.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    )
+
+    VStack(alignment: .leading, spacing: 8) {
+      HStack {
+        Text("Your \(providerName) key")
+          .scaledFont(size: 13, weight: .medium)
+          .foregroundColor(OmiColors.textPrimary)
+        Spacer()
+        Text(hasKey ? "Using your key" : "Omi-managed")
+          .scaledFont(size: 11, weight: .semibold)
+          .foregroundColor(hasKey ? OmiColors.success : OmiColors.textTertiary)
+      }
+
+      Text(
+        hasKey
+          ? "Live voice connects directly to \(providerName) with your key — Omi never sees it."
+          : "Leave blank to use Omi's managed voice. Add your own \(providerName) key to run live voice on your own account (same key as the free-plan Developer keys)."
+      )
+      .scaledFont(size: 12)
+      .foregroundColor(OmiColors.textTertiary)
+      .fixedSize(horizontal: false, vertical: true)
+
+      HStack(spacing: 8) {
+        SecureField(usesOpenAI ? "sk-..." : "AIza...", text: keyBinding)
+          .textFieldStyle(.roundedBorder)
+          .scaledFont(size: 13)
+          .onChange(of: keyBinding.wrappedValue) { _, _ in
+            // Re-warm the hub so the new key (or its removal) takes effect, and keep the
+            // four-key BYOK free-plan gate consistent — these are the same keys.
+            NotificationCenter.default.post(name: .realtimeOmniSettingsDidChange, object: nil)
+            refreshBYOKActivation()
+          }
+
+        if hasKey {
+          Button("Clear") { keyBinding.wrappedValue = "" }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+      }
+    }
+  }
+
+  // MARK: - Transcription (STT) provider + key
+
+  /// Two-way binding between the persisted STT state (`forceCloudSTT` +
+  /// `dev_deepgram_api_key`) and the three-way Transcription picker.
+  var transcriptionChoiceBinding: Binding<VoiceProviderSelection.TranscriptionChoice> {
+    Binding(
+      get: {
+        VoiceProviderSelection.transcriptionChoice(
+          forceCloud: forceCloudSTT,
+          hasDeepgramKey: !devDeepgramKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+      },
+      set: { newChoice in
+        let state = VoiceProviderSelection.transcriptionState(for: newChoice)
+        forceCloudSTT = state.forceCloud
+        if state.clearDeepgramKey { devDeepgramKey = "" }
+        refreshBYOKActivation()
+      }
+    )
+  }
+
+  var transcriptionSubtitle: String {
+    switch VoiceProviderSelection.transcriptionChoice(
+      forceCloud: forceCloudSTT,
+      hasDeepgramKey: !devDeepgramKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    ) {
+    case .onDevice:
+      return
+        "Speech-to-text runs on your Mac (Apple Silicon). No audio leaves your device. Applies to new recordings."
+    case .omiCloud:
+      return "Uses Omi's managed Deepgram cloud transcription. Applies to new recordings."
+    case .deepgramBYO:
+      return "Cloud transcription billed to your own Deepgram key. Applies to new recordings."
+    }
+  }
+
+  /// Transcription (STT) card — a control DISTINCT from the Voice Model picker.
+  /// Deepgram is audio→text only (no vision), so it never appears in the Voice Model
+  /// slot; it lives here with on-device and Omi-cloud alternatives.
+  var voiceTranscriptionCard: some View {
+    settingsCard(settingId: "aichat.transcription") {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack {
+          Image(systemName: "waveform.badge.mic")
+            .scaledFont(size: 16)
+            .foregroundColor(OmiColors.textTertiary)
+
+          Text("Transcription")
+            .scaledFont(size: 15, weight: .semibold)
+            .foregroundColor(OmiColors.textPrimary)
+
+          Spacer()
+
+          Picker("", selection: transcriptionChoiceBinding) {
+            Text("On-device (private)").tag(VoiceProviderSelection.TranscriptionChoice.onDevice)
+            Text("Omi cloud").tag(VoiceProviderSelection.TranscriptionChoice.omiCloud)
+            Text("Deepgram (your key)").tag(VoiceProviderSelection.TranscriptionChoice.deepgramBYO)
+          }
+          .pickerStyle(.menu)
+          .frame(width: 200)
+        }
+
+        Text(transcriptionSubtitle)
+          .scaledFont(size: 12)
+          .foregroundColor(OmiColors.textTertiary)
+          .fixedSize(horizontal: false, vertical: true)
+
+        if VoiceProviderSelection.transcriptionChoice(
+          forceCloud: forceCloudSTT,
+          hasDeepgramKey: !devDeepgramKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        ) == .deepgramBYO {
+          HStack(spacing: 8) {
+            SecureField("Deepgram API key", text: $devDeepgramKey)
+              .textFieldStyle(.roundedBorder)
+              .scaledFont(size: 13)
+              .onChange(of: devDeepgramKey) { _, _ in refreshBYOKActivation() }
+
+            if !devDeepgramKey.isEmpty {
+              Button("Clear") { devDeepgramKey = "" }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+          }
+        }
+      }
     }
   }
 

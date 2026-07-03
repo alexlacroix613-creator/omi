@@ -398,6 +398,10 @@ struct SettingsContentView: View {
   @AppStorage("dev_deepgram_api_key") var devDeepgramKey: String = ""
   // Standalone OpenRouter key — NOT part of the four-provider BYOK gate.
   @AppStorage("dev_openrouter_api_key") var devOpenRouterKey: String = ""
+  // Transcription (STT) routing: false = on-device Parakeet (Apple Silicon default),
+  // true = cloud Deepgram. Read by AppState+Transcription. Surfaced in the Voice
+  // Transcription card so the user can pick on-device / Omi cloud / their own key.
+  @AppStorage("forceCloudSTT") var forceCloudSTT: Bool = false
   @State var byokKeyStatuses: [BYOKProvider: BYOKValidator.Status] = [:]
   @State var byokActivationError: String?
 
