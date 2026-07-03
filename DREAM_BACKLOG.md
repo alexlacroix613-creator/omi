@@ -232,6 +232,45 @@ Legend: Value 5 = biggest win. Effort S = <1 file/hour, M = a few files, L = mul
   wired. Covered indirectly by `VoiceProviderSelectionTests`.
 - Fix: add a subscription-auth provider option; likely needs an OAuth/token bridge like
   the OpenRouter PKCE work (commit 467519dd5). Design item.
+- **Design done:** `docs-fork/VOICE_CHATGPT_SUBSCRIPTION_DESIGN.md` — ground truth is
+  a ChatGPT-subscription OAuth token **cannot** fund OpenAI's Realtime API or
+  Advanced Voice Mode (OpenAI docs + OpenClaw issue #76498); "wire the subscription
+  into GPT Realtime" is not buildable. Recommendation: Option B, a turn-based
+  subscription **cascade** (on-device STT → `ChatProvider(.userChatGPT)` → TTS) that
+  answers Alex's real want (voice on the ChatGPT plan he pays for, zero new API
+  bill) using mature, already-shipped components. Split into Pass 1 (S) / Pass 2 (M)
+  / Pass 3 (S–M, optional neural TTS polish).
+- **Pass 1 (S) done this iteration:** honesty + scaffolding, zero runtime behavior
+  change.
+  - `RealtimeOmniProvider.gptRealtime2.subtitle` (`Sources/RealtimeOmni/
+    RealtimeOmniSettings.swift`) now states plainly it needs a funded OpenAI
+    Platform key (`sk-`), not a ChatGPT plan — this is the text shown directly under
+    the Voice Model picker. `realtimeVoiceKeyField` (`SettingsContentView+Advanced.swift`)
+    gained the same disclaimer inline when the OpenAI key field is empty.
+  - New pure `Sources/VoiceEngineSelection.swift` — `Engine` enum
+    (`nativeRealtimeBYOK` / `chatGPTSubscriptionCascade`) + `isAvailable`,
+    `chatGPTCascadeSubtitle`, `effectiveEngine`. Pass 1 hard-codes the cascade engine
+    as unavailable regardless of ChatGPT connection state (no coordinator exists to
+    run it yet) — `effectiveEngine` falls back to native even for a stale/tampered
+    stored selection. Mirrors `VoiceProviderSelection`'s no-I/O style per the design
+    doc so Pass 2 has a tested seam to flip on rather than inventing the rule then.
+  - New disabled row in the Voice Model card, `voiceEngineChatGPTCascadeRow`
+    (`SettingsContentView+Advanced.swift`) — "Voice via ChatGPT plan" /
+    "Coming soon" button `.disabled(true)`, subtitle driven by
+    `VoiceEngineSelection.chatGPTCascadeSubtitle(chatGPTConnected:)` reading the
+    real `chatProvider?.isChatGPTConnected` gate (informational only — does not
+    enable the row). Mirrors the Grok placeholder pattern audited in item 6
+    (tappable-but-inert dead toggles do not exist here either).
+  - Tests: new `Tests/VoiceEngineSelectionTests.swift` (10/10). Regression:
+    `VoiceProviderSelectionTests` (8/8), `PiMonoWiringTests` (24/24),
+    `BYOKPaywallTests` (9/9) — all green, confirming the new UI wiring compiles and
+    the native realtime path is untouched.
+  - **Queued next: Pass 2 (M, medium risk)** — build
+    `SubscriptionCascadeCoordinator` gluing `LocalTranscriptionService` →
+    `ChatProvider(.userChatGPT)` → `FloatingBarVoicePlaybackService`, flip
+    `VoiceEngineSelection.isAvailable(.chatGPTSubscriptionCascade, ...)` to
+    `chatGPTConnected`, enable the row. Coordinator unit tests with fakes per the
+    design doc §5; manual end-to-end verification needs a real `codex login`.
 
 ---
 

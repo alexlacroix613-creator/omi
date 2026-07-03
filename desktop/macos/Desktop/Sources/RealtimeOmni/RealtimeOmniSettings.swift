@@ -29,7 +29,7 @@ enum RealtimeOmniProvider: String, CaseIterable, Sendable {
         switch self {
         case .auto:           return "Daily-picks the best model by quality & speed"
         case .geminiFlashLive: return "Google · native audio + vision, lowest cost"
-        case .gptRealtime2:    return "OpenAI · GA speech-to-speech"
+        case .gptRealtime2:    return "OpenAI · GA speech-to-speech — needs your own funded OpenAI API key (sk-), not your ChatGPT plan"
         }
     }
 

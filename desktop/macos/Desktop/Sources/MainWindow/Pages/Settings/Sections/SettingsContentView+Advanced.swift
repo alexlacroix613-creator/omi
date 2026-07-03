@@ -119,6 +119,10 @@ extension SettingsContentView {
           Divider()
 
           realtimeVoiceKeyField
+
+          Divider()
+
+          voiceEngineChatGPTCascadeRow
         }
       }
 
@@ -960,6 +964,43 @@ extension SettingsContentView {
     }
   }
 
+  // MARK: - Voice Engine: ChatGPT-subscription cascade (Pass 1 placeholder)
+
+  /// Honest, visible-but-disabled row for the "voice on my ChatGPT plan" engine
+  /// from DREAM_BACKLOG item 8 / docs-fork/VOICE_CHATGPT_SUBSCRIPTION_DESIGN.md.
+  /// Mirrors the exact `aiAccountRow` Grok placeholder pattern audited in item 6:
+  /// the button is `.disabled(true)` (not tappable-but-inert), the label says
+  /// "Coming soon," and the subtitle is honest about what's missing — here, that
+  /// Pass 2's `SubscriptionCascadeCoordinator` hasn't been built yet, per
+  /// `VoiceEngineSelection.isAvailable`. Reads (never writes) the real ChatGPT
+  /// connection gate so the subtitle tells the user exactly what's already true.
+  @ViewBuilder
+  var voiceEngineChatGPTCascadeRow: some View {
+    let chatGPTConnected = chatProvider?.isChatGPTConnected == true
+
+    HStack(spacing: 12) {
+      VStack(alignment: .leading, spacing: 4) {
+        Text(VoiceEngineSelection.Engine.chatGPTSubscriptionCascade.displayName)
+          .scaledFont(size: 14, weight: .medium)
+          .foregroundColor(OmiColors.textPrimary)
+
+        Text(VoiceEngineSelection.chatGPTCascadeSubtitle(chatGPTConnected: chatGPTConnected))
+          .scaledFont(size: 12)
+          .foregroundColor(OmiColors.textTertiary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+
+      Spacer()
+
+      Button("Coming soon", action: {})
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .disabled(
+          !VoiceEngineSelection.isAvailable(
+            .chatGPTSubscriptionCascade, chatGPTConnected: chatGPTConnected))
+    }
+  }
+
   // MARK: - Voice Model bring-your-own-key (realtime, multimodal)
 
   /// Bring-your-own-key field for the Voice Model picker, shown inside that card.
@@ -1001,6 +1042,16 @@ extension SettingsContentView {
       .scaledFont(size: 12)
       .foregroundColor(OmiColors.textTertiary)
       .fixedSize(horizontal: false, vertical: true)
+
+      if usesOpenAI && !hasKey {
+        // Honest label per the ChatGPT-subscription voice design doc: this key is a
+        // separate, billed OpenAI Platform key (sk-) — a ChatGPT Plus/Pro/Codex
+        // subscription cannot authorize GPT Realtime, so it will never work here.
+        Text("This is a funded OpenAI Platform key (sk-), billed by OpenAI — your ChatGPT subscription does not work here.")
+          .scaledFont(size: 11)
+          .foregroundColor(OmiColors.textTertiary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
 
       HStack(spacing: 8) {
         SecureField(usesOpenAI ? "sk-..." : "AIza...", text: keyBinding)
