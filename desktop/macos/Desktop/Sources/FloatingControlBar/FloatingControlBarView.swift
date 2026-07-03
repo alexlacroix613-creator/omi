@@ -982,7 +982,9 @@ struct FloatingControlBarView: View {
                             status: pill.status,
                             activity: pill.latestActivity,
                             isSelected: pill.id == state.activeAgentChatPillID,
-                            progress: 1
+                            progress: 1,
+                            createdAt: pill.createdAt,
+                            lastActivityAt: pill.lastActivityAt
                         )
                         .overlay(alignment: .leading) {
                             pillRowIdentityMark(pill)
@@ -2125,7 +2127,9 @@ private struct NotchAgentMorphField: View {
                                 status: pill.status,
                                 activity: pill.latestActivity,
                                 isSelected: pill.id == activePillID,
-                                progress: rowRevealProgress
+                                progress: rowRevealProgress,
+                                createdAt: pill.createdAt,
+                                lastActivityAt: pill.lastActivityAt
                             )
                                 .frame(width: rowWidth, height: rowHeight)
                         }
@@ -2232,6 +2236,15 @@ private struct NotchAgentListRow: View {
     let activity: String
     let isSelected: Bool
     let progress: CGFloat
+    var createdAt: Date = Date()
+    var lastActivityAt: Date = Date()
+
+    private var isActive: Bool {
+        switch status {
+        case .queued, .starting, .running: return true
+        case .done, .stopped, .failed: return false
+        }
+    }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -2249,17 +2262,28 @@ private struct NotchAgentListRow: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
 
-                HStack(spacing: 4) {
-                    Image(systemName: activityIcon)
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(statusColor.opacity(0.95))
-                        .frame(width: 9, height: 9)
+                // Re-evaluate every 5s while a pill is active so elapsed time
+                // ticks up and a silent agent escalates to "quiet for 2m / may
+                // have stalled" instead of a frozen status line.
+                TimelineView(.periodic(from: .now, by: 5)) { context in
+                    let narration = AgentStallNarration.narrate(
+                        isActive: isActive,
+                        startedAt: createdAt,
+                        lastActivityAt: lastActivityAt,
+                        now: context.date
+                    )
+                    HStack(spacing: 4) {
+                        Image(systemName: iconName(for: narration))
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(tint(for: narration).opacity(0.95))
+                            .frame(width: 9, height: 9)
 
-                    Text(progressSummary)
-                        .scaledFont(size: 9, weight: .medium)
-                        .foregroundStyle(.white.opacity(0.52))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                        Text(subtitle(for: narration))
+                            .scaledFont(size: 9, weight: .medium)
+                            .foregroundStyle(.white.opacity(narration == nil || narration?.level == .active ? 0.52 : 0.72))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
                 }
             }
             .opacity(progress)
@@ -2290,6 +2314,33 @@ private struct NotchAgentListRow: View {
             return trimmed
         }
         return "\(status.displayLabel) — \(trimmed)"
+    }
+
+    /// Subtitle line combining the normal activity with a live elapsed clock,
+    /// or — once the agent goes quiet — the stall narration so a background
+    /// task never reads as a frozen "Working…".
+    private func subtitle(for narration: AgentStallNarration.Result?) -> String {
+        guard let narration else { return progressSummary }
+        switch narration.level {
+        case .active:
+            return "\(progressSummary) · \(narration.elapsedLabel)"
+        case .slow, .stalled:
+            return narration.text
+        }
+    }
+
+    private func iconName(for narration: AgentStallNarration.Result?) -> String {
+        if narration?.level == .stalled { return "exclamationmark.triangle.fill" }
+        if narration?.level == .slow { return "hourglass" }
+        return activityIcon
+    }
+
+    private func tint(for narration: AgentStallNarration.Result?) -> Color {
+        switch narration?.level {
+        case .stalled: return Color(red: 1.0, green: 0.42, blue: 0.42)
+        case .slow: return Color(red: 1.0, green: 0.80, blue: 0.40)
+        default: return statusColor
+        }
     }
 
     private var statusColor: Color {

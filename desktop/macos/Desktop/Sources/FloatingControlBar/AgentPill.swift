@@ -63,7 +63,20 @@ final class AgentPill: ObservableObject, Identifiable {
 
     @Published var title: String
     @Published var status: Status = .queued
-    @Published var latestActivity: String = "Queued…"
+    @Published var latestActivity: String = "Queued…" {
+        didSet {
+            // Stamp the moment activity last changed so the floating bar can
+            // narrate "quiet for 2m / may have stalled" instead of a frozen
+            // "Working…". Only re-stamp on a genuine change so re-assigning the
+            // same string (e.g. redundant updates) doesn't reset the clock.
+            if latestActivity != oldValue { lastActivityAt = Date() }
+        }
+    }
+
+    /// When `latestActivity` last changed. Drives `AgentStallNarration` so a
+    /// background agent that goes silent surfaces a stall hint rather than
+    /// looking permanently "Running".
+    @Published var lastActivityAt: Date = Date()
     @Published var transcript: [String] = []
     @Published var aiMessage: ChatMessage?
     @Published var conversationMessages: [ChatMessage] = []
