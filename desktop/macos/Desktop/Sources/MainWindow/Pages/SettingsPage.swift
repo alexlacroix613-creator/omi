@@ -278,6 +278,7 @@ struct SettingsContentView: View {
   @State var transcriptionLanguage: String = "en"
   @State var vadGateEnabled: Bool = false
   @State var systemAudioCaptureMode: AssistantSettings.SystemAudioCaptureMode = .always
+  @State var filterMusicEnabled: Bool = true
 
   // Multi-chat mode setting
   @AppStorage("multiChatEnabled") var multiChatEnabled = false
@@ -452,6 +453,7 @@ struct SettingsContentView: View {
     _transcriptionLanguage = State(initialValue: settings.transcriptionLanguage)
     _transcriptionAutoDetect = State(initialValue: settings.transcriptionAutoDetect)
     _systemAudioCaptureMode = State(initialValue: settings.systemAudioCaptureMode)
+    _filterMusicEnabled = State(initialValue: settings.filterMusicFromConversations)
   }
 
   /// Computed status text for notifications

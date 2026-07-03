@@ -269,6 +269,39 @@ extension SettingsContentView {
         }
       }
 
+      // Filter Music From Conversations
+      settingsCard(settingId: "transcription.filtermusic") {
+        VStack(alignment: .leading, spacing: 12) {
+          HStack {
+            Image(systemName: "music.note.list")
+              .scaledFont(size: 16)
+              .foregroundColor(OmiColors.purplePrimary)
+
+            VStack(alignment: .leading, spacing: 4) {
+              Text("Filter Music From Conversations")
+                .scaledFont(size: 15, weight: .medium)
+                .foregroundColor(OmiColors.textPrimary)
+
+              Text(
+                "Uses on-device sound classification to skip songs, TV, and videos — whether played out loud (picked up by the mic) or streaming from another app — so they don't become conversations. Speech and calls are kept. (Vocal genres like rap may still slip through.)"
+              )
+              .scaledFont(size: 13)
+              .foregroundColor(OmiColors.textTertiary)
+              .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+
+            Toggle("", isOn: $filterMusicEnabled)
+              .toggleStyle(.switch)
+              .onChange(of: filterMusicEnabled) { _, newValue in
+                AssistantSettings.shared.filterMusicFromConversations = newValue
+                restartTranscriptionIfNeeded()
+              }
+          }
+        }
+      }
+
     }
   }
 

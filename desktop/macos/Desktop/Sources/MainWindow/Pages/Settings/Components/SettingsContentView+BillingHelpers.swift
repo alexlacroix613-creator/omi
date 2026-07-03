@@ -725,6 +725,7 @@ extension SettingsContentView {
     vocabularyList = AssistantSettings.shared.transcriptionVocabulary
     vadGateEnabled = AssistantSettings.shared.vadGateEnabled
     systemAudioCaptureMode = AssistantSettings.shared.systemAudioCaptureMode
+    filterMusicEnabled = AssistantSettings.shared.filterMusicFromConversations
 
     Task {
       do {

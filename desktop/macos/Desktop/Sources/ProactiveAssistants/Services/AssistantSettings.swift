@@ -27,6 +27,7 @@ class AssistantSettings {
     private let vadGateEnabledKey = "vadGateEnabled"
     private let batchTranscriptionEnabledKey = "batchTranscriptionEnabled"
     private let systemAudioCaptureModeKey = "systemAudioCaptureMode"
+    private let filterMusicFromConversationsKey = "filterMusicFromConversations"
 
     // MARK: - Default Values
 
@@ -41,6 +42,7 @@ class AssistantSettings {
     private let defaultVadGateEnabled = false
     private let defaultBatchTranscriptionEnabled = false
     private let defaultSystemAudioCaptureMode: SystemAudioCaptureMode = .onlyDuringMeetings
+    private let defaultFilterMusicFromConversations = true
 
     private init() {
         // Register defaults
@@ -56,6 +58,7 @@ class AssistantSettings {
             vadGateEnabledKey: defaultVadGateEnabled,
             batchTranscriptionEnabledKey: defaultBatchTranscriptionEnabled,
             systemAudioCaptureModeKey: defaultSystemAudioCaptureMode.rawValue,
+            filterMusicFromConversationsKey: defaultFilterMusicFromConversations,
         ])
     }
 
@@ -216,6 +219,20 @@ class AssistantSettings {
         }
     }
 
+    /// Whether music/singing/TV/video audio should be filtered out of conversations.
+    /// When on (default), on-device Parakeet windows that Apple's SoundAnalysis classifies as
+    /// music/singing are skipped on BOTH the microphone and system-audio channels — so a song
+    /// played out loud (picked up by the mic) or streamed through system audio never becomes a
+    /// "conversation". When off, no music filtering is applied to either channel.
+    /// Posts `.transcriptionSettingsDidChange` so an active recording can re-apply the filter.
+    var filterMusicFromConversations: Bool {
+        get { UserDefaults.standard.bool(forKey: filterMusicFromConversationsKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: filterMusicFromConversationsKey)
+            NotificationCenter.default.post(name: .transcriptionSettingsDidChange, object: nil)
+        }
+    }
+
     /// Returns vocabulary with "Omi" always included (for DeepGram)
     var effectiveVocabulary: [String] {
         var vocab = Set(transcriptionVocabulary)
@@ -236,6 +253,7 @@ class AssistantSettings {
         vadGateEnabled = defaultVadGateEnabled
         batchTranscriptionEnabled = defaultBatchTranscriptionEnabled
         systemAudioCaptureMode = defaultSystemAudioCaptureMode
+        filterMusicFromConversations = defaultFilterMusicFromConversations
     }
 
     // MARK: - Supported Languages

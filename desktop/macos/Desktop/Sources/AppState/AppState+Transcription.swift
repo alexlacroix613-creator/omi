@@ -74,10 +74,13 @@ extension AppState {
           self?.handleLocalSTTModelLoadFailure()
         }
         // Mic = the user; system audio = another speaker. Transcribed separately for diarization.
-        let mic = LocalTranscriptionService(language: effectiveLanguage, isUser: true)
+        // Music filter (default on) skips music/singing windows on both channels so songs played
+        // out loud (mic) or streamed from other apps (system) don't become conversations.
+        let filterMusic = AssistantSettings.shared.filterMusicFromConversations
+        let mic = LocalTranscriptionService(language: effectiveLanguage, isUser: true, filterMusic: filterMusic)
         mic.start(onSegments: onLocalSegments, onModelLoadFailed: onModelLoadFailed)
         localMicService = mic
-        let system = LocalTranscriptionService(language: effectiveLanguage, isUser: false)
+        let system = LocalTranscriptionService(language: effectiveLanguage, isUser: false, filterMusic: filterMusic)
         system.start(onSegments: onLocalSegments, onModelLoadFailed: onModelLoadFailed)
         localSystemService = system
       } else {
@@ -930,10 +933,11 @@ extension AppState {
         let onLocalSegments: LocalTranscriptionService.SegmentsHandler = { [weak self] segments in
           self?.handleBackendSegments(segments)
         }
-        let mic = LocalTranscriptionService(language: effectiveLanguage, isUser: true)
+        let filterMusic = AssistantSettings.shared.filterMusicFromConversations
+        let mic = LocalTranscriptionService(language: effectiveLanguage, isUser: true, filterMusic: filterMusic)
         mic.start(onSegments: onLocalSegments)
         localMicService = mic
-        let system = LocalTranscriptionService(language: effectiveLanguage, isUser: false)
+        let system = LocalTranscriptionService(language: effectiveLanguage, isUser: false, filterMusic: filterMusic)
         system.start(onSegments: onLocalSegments)
         localSystemService = system
         log("Transcription: Re-armed on-device Parakeet (mic + system) for next conversation")

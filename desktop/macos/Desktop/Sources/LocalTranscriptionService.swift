@@ -25,7 +25,10 @@ private final class MusicTally: NSObject, SNResultsObserving {
 
     /// Music when music frames dominate speech *and* make up a meaningful share of the window —
     /// so a call (other party's speech through system audio) is kept, but a song is dropped.
-    var isMusic: Bool { frames > 0 && musicFrames > speechFrames && musicFrames * 3 >= frames }
+    var isMusic: Bool {
+        LocalTranscriptionService.isMusicVerdict(
+            frames: frames, musicFrames: musicFrames, speechFrames: speechFrames)
+    }
 }
 
 /// On-device speech-to-text via FluidAudio (NVIDIA Parakeet TDT, CoreML on the Apple Neural Engine).
@@ -44,6 +47,11 @@ final class LocalTranscriptionService: @unchecked Sendable {
     private let language: String
     /// Source-based diarization: mic = the user ("You"), system audio = another speaker.
     private let isUser: Bool
+    /// When true, windows classified as music/singing by Apple's SoundAnalysis are skipped on THIS
+    /// channel (both mic and system when the "Filter music from conversations" setting is on) so a
+    /// song — played out loud into the mic, or streamed through system audio — never becomes a
+    /// conversation. When false, every non-silent window is transcribed (no music filtering).
+    private let filterMusic: Bool
     private let speakerLabel: String
     private let speakerId: Int
     private let sampleRate = 16000
@@ -71,11 +79,20 @@ final class LocalTranscriptionService: @unchecked Sendable {
 
     private var pumpTask: Task<Void, Never>?
 
-    init(language: String = "en", isUser: Bool = true) {
+    init(language: String = "en", isUser: Bool = true, filterMusic: Bool = true) {
         self.language = language
         self.isUser = isUser
+        self.filterMusic = filterMusic
         self.speakerLabel = isUser ? "SPEAKER_00" : "SPEAKER_01"
         self.speakerId = isUser ? 0 : 1
+    }
+
+    /// Verdict rule for the music/speech tally over one classification window. Music wins only when
+    /// music frames strictly outnumber speech frames AND make up at least a third of all classified
+    /// frames — so a spoken call (speech-dominant) is kept while a song is dropped. Extracted as a
+    /// pure function so the threshold can be unit-tested without running SoundAnalysis on audio.
+    static func isMusicVerdict(frames: Int, musicFrames: Int, speechFrames: Int) -> Bool {
+        frames > 0 && musicFrames > speechFrames && musicFrames * 3 >= frames
     }
 
     /// Begin loading the model (async) and start the periodic flush loop.
@@ -202,12 +219,17 @@ final class LocalTranscriptionService: @unchecked Sendable {
         let rms = (window.reduce(Float(0)) { $0 + $1 * $1 } / Float(window.count)).squareRoot()
         guard rms > 0.004 else { return }
 
-        // Music/video gate: don't turn songs, TV, or videos playing through *system audio* into
-        // "conversations" — only real conversations/calls should be transcribed. Applied to the
-        // system channel only; the mic channel (the user's own voice) is never gated. Runs Apple's
-        // on-device SoundAnalysis classifier *before* Parakeet, so music also costs us no transcription.
-        if !isUser, Self.windowIsMusic(window, sampleRate: sampleRate) {
-            log(String(format: "LocalTranscriptionService[sys]: skipped %.1fs music/video window (rms=%.4f)", durSec, rms))
+        // Music/video gate: don't turn songs, TV, or videos into "conversations" — only real
+        // conversations/calls should be transcribed. With the "Filter music from conversations"
+        // setting on (default), this runs on BOTH channels: the system channel (songs/videos
+        // streamed from other apps) AND the mic channel (a song played out loud through speakers,
+        // re-recorded by the mic). Uses Apple's on-device SoundAnalysis classifier *before*
+        // Parakeet, so skipped music also costs us no transcription. The tally is speech-biased
+        // (see isMusicVerdict), so a spoken window — the user's own voice, or a call — is kept.
+        // NOTE: vocal genres Apple labels "speech" (e.g. rap) can still slip through; the
+        // cross-channel duplicate-text heuristic is the planned follow-up for that residue.
+        if filterMusic, Self.windowIsMusic(window, sampleRate: sampleRate) {
+            log(String(format: "LocalTranscriptionService[%@]: skipped %.1fs music/video window (rms=%.4f)", isUser ? "mic" : "sys", durSec, rms))
             return
         }
 
