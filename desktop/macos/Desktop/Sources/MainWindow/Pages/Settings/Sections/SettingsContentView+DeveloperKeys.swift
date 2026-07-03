@@ -40,6 +40,10 @@ extension SettingsContentView {
         value: $devDeepgramKey
       )
 
+      // Standalone — NOT one of the four BYOK keys, so it lives outside the
+      // free-plan gate and never affects `isByokActive`.
+      openRouterKeyCard(settingId: "advanced.devkeys.openrouter")
+
       if let byokActivationError {
         settingsCard(settingId: "advanced.devkeys.error") {
           HStack(spacing: 10) {
