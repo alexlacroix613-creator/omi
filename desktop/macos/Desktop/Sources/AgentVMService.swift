@@ -2,6 +2,22 @@ import Foundation
 
 /// Manages the cloud agent VM lifecycle: provisioning, status polling, and database upload.
 /// All operations are fire-and-forget from the caller's perspective.
+///
+/// INVARIANT (`docs-fork/EXECUTE_REROUTE_DESIGN.md` §3a/§3b): this is a
+/// **one-way memory-database backup pipeline** for the cloud/mobile product —
+/// it uploads a replica of `omi.db` and a Firebase token so a *different*
+/// client can later query the user's memory. It MUST NOT become a
+/// task-execution path. Every user-triggered Execute routes through
+/// `AgentPillsManager.spawn` / `spawnFromUserQuery`
+/// (`Sources/FloatingControlBar/AgentPill.swift`) so progress renders in the
+/// local reporting pill — never here. Today's only callers are the background
+/// trio traced in the design doc: app-launch warmup (`DesktopHomeView.swift`),
+/// onboarding completion (`OnboardingView.swift`), and sync repair
+/// (`AgentSyncService.swift`) — `Tests/AgentVMCallerInvariantTests.swift`
+/// fails if a 4th caller appears. A future cloud-Execute feature must first
+/// adapt this pipeline's events into `AgentRuntimeStatusStore` (design doc
+/// §3c, gated on a backend endpoint that does not exist yet) before it may
+/// dispatch a task here.
 actor AgentVMService {
     static let shared = AgentVMService()
 

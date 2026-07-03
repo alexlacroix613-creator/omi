@@ -120,6 +120,16 @@ final class AgentPill: ObservableObject, Identifiable {
 
 /// Singleton that owns the running `AgentPill`s. Spawning a pill creates a new
 /// `ChatProvider` and observes its message stream until the agent finishes.
+///
+/// INVARIANT (`docs-fork/EXECUTE_REROUTE_DESIGN.md` §3a): this is the **sole
+/// entry point for user-initiated Execute**. Every Execute surface (Tasks
+/// page, floating control bar, realtime voice hub, chat tool executor, memory
+/// export) calls `spawn` / `spawnFromUserQuery` / `spawnFromHandoff` so the
+/// run renders through the local `AgentRuntimeStatusStore` reporting pill.
+/// Keep it that way — never route a user Execute at `AgentVMService`, which is
+/// a one-way memory-backup pipeline with no task-execution channel (see that
+/// type's header comment). `Tests/AgentVMCallerInvariantTests.swift` checks
+/// the known Execute surfaces still call in here, not there.
 @MainActor
 final class AgentPillsManager: ObservableObject {
     static let shared = AgentPillsManager()

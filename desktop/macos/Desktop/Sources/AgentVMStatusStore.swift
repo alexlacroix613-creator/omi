@@ -1,8 +1,11 @@
 import Foundation
 
-/// Lifecycle state of the cloud agent VM pipeline (provision → poll → upload DB)
-/// that `AgentVMService` walks through. Exists so a failure or a stuck poll has
-/// somewhere to render in SwiftUI instead of only ever reaching `log(...)`.
+/// Lifecycle state of the cloud memory-replica pipeline (provision → poll →
+/// upload DB) that `AgentVMService` walks through. This is a background
+/// database backup, not a task-execution agent — see `AgentVMService`'s header
+/// comment and `docs-fork/EXECUTE_REROUTE_DESIGN.md`. Exists so a failure or a
+/// stuck poll has somewhere to render in SwiftUI instead of only ever reaching
+/// `log(...)`.
 enum AgentVMState: Equatable, Sendable {
   case idle
   case provisioning
@@ -24,7 +27,7 @@ enum AgentVMState: Equatable, Sendable {
   /// Short status-row label.
   var label: String {
     switch self {
-    case .idle: return "Idle"
+    case .idle: return "Idle — tasks run on this Mac"
     case .provisioning: return "Provisioning cloud VM…"
     case .polling: return "Waiting for cloud VM…"
     case .uploading: return "Uploading database…"
@@ -54,11 +57,13 @@ enum AgentVMStallLogic {
   }
 }
 
-/// Observable status for the cloud agent VM pipeline, fed by `AgentVMService`
-/// at each stage transition. Consumed by a small status row in
-/// Settings → Advanced → Troubleshooting so the "ghosting cloud VM" failure
+/// Observable status for the cloud memory-replica pipeline, fed by
+/// `AgentVMService` at each stage transition. Consumed by a small status row
+/// in Settings → Advanced → Troubleshooting so the "ghosting cloud VM" failure
 /// mode (DREAM_BACKLOG item 4) has a visible signal instead of being
-/// fire-and-forget.
+/// fire-and-forget. This pipeline backs up your memory database for
+/// cloud/mobile access — it never runs your tasks (those run locally; see
+/// `AgentPillsManager`).
 @MainActor
 final class AgentVMStatusStore: ObservableObject {
   static let shared = AgentVMStatusStore()

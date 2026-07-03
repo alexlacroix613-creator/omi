@@ -1180,13 +1180,19 @@ extension SettingsContentView {
     }
   }
 
-  // MARK: - Cloud Sync Status (item 4, DREAM_BACKLOG)
+  // MARK: - Cloud Sync Status (item 4, DREAM_BACKLOG; honesty pass in item 5 Pass B)
 
-  /// Small status row for the cloud agent VM pipeline (provision → poll →
-  /// upload DB) that `AgentVMService` drives in the background. It previously
-  /// only ever logged; this renders its current stage, "since" time, and
-  /// flags a stalled/timed-out/failed run in the same amber/red language the
-  /// floating-bar pill stall narration uses.
+  /// Small status row for the cloud memory-replica pipeline (provision → poll
+  /// → upload DB) that `AgentVMService` drives in the background. It
+  /// previously only ever logged; this renders its current stage, "since"
+  /// time, and flags a stalled/timed-out/failed run in the same amber/red
+  /// language the floating-bar pill stall narration uses.
+  ///
+  /// Honesty note (`docs-fork/EXECUTE_REROUTE_DESIGN.md` §3b/Pass B): this
+  /// card must never read as "your task is running in the cloud" — the VM it
+  /// describes only backs up the memory database for cloud/mobile access and
+  /// never executes anything. The fixed caption below the dynamic subtitle
+  /// states that plainly in every state, not just `.idle`.
   var cloudSyncStatusCard: some View {
     settingsCard(settingId: "advanced.troubleshooting.cloudsync") {
       TimelineView(.periodic(from: .now, by: 5)) { context in
@@ -1208,6 +1214,10 @@ extension SettingsContentView {
             Text(cloudSyncSubtitle(for: state, since: since, now: context.date, stalled: stalled))
               .scaledFont(size: 13)
               .foregroundColor(cloudSyncColor(for: state, stalled: stalled))
+
+            Text("Memory backup for cloud/mobile access — your tasks run on this Mac.")
+              .scaledFont(size: 12)
+              .foregroundColor(OmiColors.textTertiary)
           }
 
           Spacer()

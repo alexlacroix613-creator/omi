@@ -109,13 +109,53 @@ Legend: Value 5 = biggest win. Effort S = <1 file/hour, M = a few files, L = mul
   suite flaky/order-dependent on macOS notification state). The pure logic they
   delegate to (`transition(to:)`) is fully covered instead.
 
-### 5. Reroute Execute away from the ghosting cloud VM to a reporting agent
-- **Value 5 · Effort L · Risk High** — the real structural fix; too big for one pass.
-- Today's user-triggered Execute already uses the local bridge/pill path (good). The
-  cloud VM is only used by background DB sync (`DesktopHomeView.swift:705`,
-  `OnboardingView.swift:502`). If any future Execute is meant to run *on* the VM, it
-  must stream status back. Design an agent that reports session/update events like the
-  local bridge does, instead of a headless VM. Keep as an L design item.
+### 5. [DONE — Design + Passes A/B shipped; Pass C GATED] Reroute Execute away from the ghosting cloud VM to a reporting agent
+- **Value 5 · Effort L→S+S (re-rated) · Risk High→Low/Med (re-rated)**.
+- Was: assumed to need an L structural rebuild. Design pass
+  (`docs-fork/EXECUTE_REROUTE_DESIGN.md`) traced every caller and found the
+  "reroute" is already the architecture: user-triggered Execute already routes
+  100% through the local reporting pill (`AgentPillsManager.spawn` /
+  `spawnFromUserQuery`); the cloud VM (`AgentVMService`) has exactly 3
+  callers, all background (`DesktopHomeView.swift:705` warmup,
+  `OnboardingView.swift:502` onboarding, `AgentSyncService.swift:220` sync
+  repair), and is a one-way memory-database backup pipeline that never
+  dispatches a task or reads a result back.
+- **Built (Pass A — lock the invariant, S):** doc-comment invariants at both
+  chokepoints — `AgentVMService`'s header (`Sources/AgentVMService.swift`)
+  states it is a backup-only pipeline that must never carry a user task, and
+  `AgentPillsManager`'s header (`Sources/FloatingControlBar/AgentPill.swift`)
+  states it is the sole Execute entry point — each pointing at the other and
+  at the design doc. New `Tests/AgentVMCallerInvariantTests.swift` (2 tests):
+  a source scan (via `#filePath`, same technique `StartupWarmupPolicyTests`
+  already uses to read sibling source files) asserts the set of files calling
+  `AgentVMService.shared.<method>` is EXACTLY the known background trio, and a
+  companion test asserts the three known Execute surfaces (`TasksPage.swift`,
+  `FloatingControlBarView.swift`, `MemoryExportExecutor.swift`) still call
+  `AgentPillsManager.shared.spawn` and never call `AgentVMService` directly.
+  Honest limitation: textual scan, not a real call-graph/SourceKit check — it
+  can't see indirection through a closure or a renamed reference, but it is
+  exact for the direct-call shape every known caller (and any careless future
+  wiring attempt) would use.
+- **Built (Pass B — finish the honesty pass, S):** reworded "cloud agent VM
+  pipeline" → "cloud memory-replica pipeline" in `AgentVMStatusStore.swift`'s
+  doc comments (kills the "agent = runs my tasks" implication at the source);
+  `AgentVMState.idle.label` now reads "Idle — tasks run on this Mac"; the
+  Troubleshooting card (`cloudSyncStatusCard`,
+  `SettingsContentView+Assistants.swift`) gained a fixed one-line caption
+  under the existing dynamic subtitle, shown in every state: "Memory backup
+  for cloud/mobile access — your tasks run on this Mac." — copy-only, same
+  card pattern, no new state.
+- **Not built — Pass C is GATED, do not build speculatively:** the §3c
+  reporting channel (`CloudAgentSessionReader` adapting a cloud task's
+  session/update events into the local pill) requires a backend endpoint,
+  `GET /session/<id>/events`, that does not exist yet. Building the adapter
+  against a nonexistent endpoint would be untestable and speculative. Pick
+  this up only when (1) a product decision is made to offer cloud Execute and
+  (2) the backend ships that endpoint.
+- Tests: new `AgentVMCallerInvariantTests` (2/2), regression
+  `AgentVMStatusStoreTests` (10/10), `PiMonoWiringTests` (24/24),
+  `AgentPillLifecycleTests` (48/48) — all green, confirming the doc-comment
+  and copy edits didn't touch behavior.
 
 ### 6. [DONE this iteration] "Coming soon" provider placeholders may be dead toggles
 - **Value 3 · Effort S · Risk Low**
