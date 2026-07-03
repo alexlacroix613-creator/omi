@@ -1,0 +1,5 @@
+# Local build artifacts — do not commit heavy bundles.
+# Only INSTALL.md (and this file) are tracked.
+*.app
+.backup/
+agent-dist-*
