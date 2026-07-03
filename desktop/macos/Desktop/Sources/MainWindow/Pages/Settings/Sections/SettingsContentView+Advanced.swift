@@ -772,12 +772,14 @@ extension SettingsContentView {
 
         aiAccountRow(
           provider: .chatgpt,
-          isConnected: false,
-          subtitle: "Coming soon — requires a desktop harness for your ChatGPT account.",
-          connectTitle: "Coming soon",
-          comingSoon: true,
-          connectAction: {},
-          disconnectAction: {}
+          isConnected: chatProvider?.isChatGPTConnected == true,
+          subtitle: "Uses your ChatGPT plan via OpenAI Codex.",
+          connectTitle: chatProvider?.isChatGPTConnected == true ? "Reconnect" : "Connect",
+          comingSoon: false,
+          connectAction: connectChatGPTAccount,
+          disconnectAction: {
+            Task { await chatProvider?.disconnectChatGPT() }
+          }
         )
 
         Divider()
@@ -795,6 +797,7 @@ extension SettingsContentView {
     }
     .onAppear {
       chatProvider?.checkClaudeConnectionStatus()
+      chatProvider?.checkChatGPTConnectionStatus()
     }
   }
 
@@ -862,6 +865,18 @@ extension SettingsContentView {
       await chatProvider?.switchBridgeMode(to: .userClaude)
       chatProvider?.checkClaudeConnectionStatus()
       chatProvider?.startClaudeAuth()
+    }
+  }
+
+  private func connectChatGPTAccount() {
+    chatBridgeMode = ChatProvider.BridgeMode.userChatGPT.rawValue
+    Task {
+      await chatProvider?.switchBridgeMode(to: .userChatGPT)
+      chatProvider?.checkChatGPTConnectionStatus()
+      // If already connected (auth.json present), skip the login browser flow.
+      if chatProvider?.isChatGPTConnected != true {
+        chatProvider?.startChatGPTAuth()
+      }
     }
   }
 

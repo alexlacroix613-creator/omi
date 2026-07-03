@@ -899,6 +899,7 @@ BROWSER TABS: when you use the browser (Playwright), on your FIRST browser actio
     enum BridgeMode: String {
         case omiAI = "agentSDK"     // Legacy, auto-migrated to piMono
         case userClaude = "claudeCode"
+        case userChatGPT = "codexCli"
         case piMono = "piMono"
         case hermes = "hermes"
         case openClaw = "openclaw"
@@ -940,6 +941,12 @@ BROWSER TABS: when you use the browser (Playwright), on your FIRST browser actio
     @Published var claudeAuthUrl: String?
     /// Whether the user has a cached Claude OAuth token
     @Published var isClaudeConnected = false
+    /// Whether the user has a usable ChatGPT/Codex token at ~/.codex/auth.json
+    @Published var isChatGPTConnected = false
+    /// True while a `codex login` browser flow is running (drives spinner/disable in UI)
+    @Published var isChatGPTAuthInProgress = false
+    /// Set when the Codex CLI could not be found, so the UI can tell the user to install it
+    @Published var chatGPTAuthError: String?
     /// Cumulative tokens used in the current session via Omi account
     @Published var sessionTokensUsed: Int = 0
     /// Cumulative USD cost spent using the Omi account, persisted across sessions.
@@ -1252,6 +1259,11 @@ BROWSER TABS: when you use the browser (Playwright), on your FIRST browser actio
         bridgeMode == BridgeMode.userClaude.rawValue
     }
 
+    /// Whether we're currently in user's ChatGPT (Codex) account mode
+    private var isUserChatGPTMode: Bool {
+        bridgeMode == BridgeMode.userChatGPT.rawValue
+    }
+
     /// Ensure the agent bridge is started (restarts if the process died).
     /// - Parameter fromModeSwitch: true when called from within switchBridgeMode,
     ///   which already holds modeSwitchInProgress. External callers (sendMessage)
@@ -1412,6 +1424,10 @@ BROWSER TABS: when you use the browser (Playwright), on your FIRST browser actio
         if mode == .userClaude {
             checkClaudeConnectionStatus()
         }
+        // Check ChatGPT (Codex) connection status when switching to that account
+        if mode == .userChatGPT {
+            checkChatGPTConnectionStatus()
+        }
 
         // Warm up the new bridge. Keep modeSwitchInProgress = true so external
         // callers (sendMessage) block until warmup completes. Pass fromModeSwitch
@@ -1510,6 +1526,92 @@ BROWSER TABS: when you use the browser (Playwright), on your FIRST browser actio
         // 4. Switch back to piMono through the serialized switchBridgeMode path
         //    so all bridge lifecycle state (activeBridgeHarness, modeSwitchInProgress,
         //    waiters) stays consistent.
+        await switchBridgeMode(to: .piMono)
+    }
+
+    // MARK: - ChatGPT (Codex) account
+
+    /// Start ChatGPT (Codex) authentication.
+    ///
+    /// Unlike Claude — where the agent bridge runs the OAuth loopback server and
+    /// hands us a URL to open — the `codex` CLI owns the entire login flow: it
+    /// opens the browser and runs its own localhost callback, then writes
+    /// ~/.codex/auth.json. So we shell out to `codex login` and re-check the
+    /// token file when it finishes. If Codex isn't installed we surface an
+    /// actionable error instead.
+    func startChatGPTAuth() {
+        guard isUserChatGPTMode else { return }
+        guard !isChatGPTAuthInProgress else { return }
+
+        guard let codexPath = CodexAccountAuth.locateCodexBinary() else {
+            logError("ChatProvider: Codex CLI not found for ChatGPT login")
+            chatGPTAuthError = "Codex CLI not found. Install it (e.g. `brew install codex`), then try Connect again."
+            return
+        }
+
+        chatGPTAuthError = nil
+        isChatGPTAuthInProgress = true
+        log("ChatProvider: Starting `codex login` via \(codexPath)")
+
+        Task { [weak self] in
+            let status = await Task.detached { () -> Int32 in
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: codexPath)
+                proc.arguments = ["login"]
+                proc.standardOutput = FileHandle.nullDevice
+                proc.standardError = FileHandle.nullDevice
+                do {
+                    try proc.run()
+                    proc.waitUntilExit()
+                    return proc.terminationStatus
+                } catch {
+                    return -1
+                }
+            }.value
+
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.isChatGPTAuthInProgress = false
+                if status != 0 {
+                    log("ChatProvider: `codex login` exited with status \(status)")
+                }
+                self.checkChatGPTConnectionStatus()
+                if !self.isChatGPTConnected {
+                    self.chatGPTAuthError = "ChatGPT login did not complete. Run `codex login` in a terminal if the browser flow was interrupted."
+                }
+            }
+        }
+    }
+
+    /// Check whether a usable ChatGPT/Codex token exists at ~/.codex/auth.json.
+    /// Reads fresh each call — tokens rotate.
+    func checkChatGPTConnectionStatus() {
+        isChatGPTConnected = CodexAccountAuth.isConnected()
+    }
+
+    /// Disconnect ChatGPT (Codex): move the token file aside (reversible), clear
+    /// state, and switch back to the free Omi account via the serialized path.
+    func disconnectChatGPT() async {
+        log("ChatProvider: Disconnecting ChatGPT (Codex) account")
+
+        // Rename ~/.codex/auth.json → auth.json.disconnected rather than deleting,
+        // so the token can be restored and we never destroy user credentials.
+        let authPath = CodexAccountAuth.authFilePath()
+        let disconnectedPath = CodexAccountAuth.disconnectedFilePath()
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: authPath) {
+            try? fileManager.removeItem(atPath: disconnectedPath)
+            do {
+                try fileManager.moveItem(atPath: authPath, toPath: disconnectedPath)
+                log("ChatProvider: Moved Codex auth.json to \(disconnectedPath)")
+            } catch {
+                log("ChatProvider: Failed to move Codex auth.json: \(error.localizedDescription)")
+            }
+        }
+
+        isChatGPTConnected = false
+        chatGPTAuthError = nil
+
         await switchBridgeMode(to: .piMono)
     }
 
@@ -3770,8 +3872,12 @@ BROWSER TABS: when you use the browser (Playwright), on your FIRST browser actio
             // override the harness without changing the user's global preference.
             let effectiveHarness = activeBridgeHarness
             let isPiMonoHarness = effectiveHarness == Self.harnessMode(for: .piMono)
+            // Personal-account harnesses (user's Claude or ChatGPT/Codex subscription):
+            // record usage against the user's own account, not Omi's quota.
             let isUserClaudeHarness = effectiveHarness == Self.harnessMode(for: .userClaude)
-            if isUserClaudeHarness {
+            let isPersonalAccountHarness = isUserClaudeHarness
+                || effectiveHarness == Self.harnessMode(for: .userChatGPT)
+            if isPersonalAccountHarness {
                 let r = queryResult
                 Task.detached(priority: .background) {
                     await APIClient.shared.recordLlmUsage(
