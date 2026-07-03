@@ -17,6 +17,7 @@ describe("adapter selection and activation", () => {
     expect(adapterIdForHarnessMode("hermes")).toBe("hermes");
     expect(adapterIdForHarnessMode("openclaw")).toBe("openclaw");
     expect(adapterIdForHarnessMode("openClaw")).toBe("openclaw");
+    expect(adapterIdForHarnessMode("codex")).toBe("codex");
     expect(() => adapterIdForHarnessMode("unknown")).toThrow("Unknown harness mode: unknown");
   });
 
@@ -31,6 +32,10 @@ describe("adapter selection and activation", () => {
     expect(adapterIsActivated("hermes", { OMI_HERMES_ADAPTER_COMMAND: "  " })).toBe(false);
     expect(adapterIsActivated("hermes", { OMI_HERMES_ADAPTER_COMMAND: "hermes-adapter" })).toBe(true);
     expect(adapterIsActivated("openclaw", { OMI_OPENCLAW_ADAPTER_COMMAND: "openclaw-adapter" })).toBe(true);
+
+    // Codex is bundled — always activated, no env var required.
+    expect(adapterActivationEnv("codex")).toBeUndefined();
+    expect(adapterIsActivated("codex", {})).toBe(true);
   });
 
   it("centralizes production adapter profiles and capabilities", () => {
@@ -47,6 +52,11 @@ describe("adapter selection and activation", () => {
     expect(adapterProfile("openclaw")).toMatchObject({
       adapterId: "openclaw",
       activationEnv: "OMI_OPENCLAW_ADAPTER_COMMAND",
+      capabilities: { supportsTools: false, supportsModelSwitching: false },
+    });
+    expect(adapterProfile("codex")).toMatchObject({
+      adapterId: "codex",
+      activationEnv: undefined,
       capabilities: { supportsTools: false, supportsModelSwitching: false },
     });
     expect(adapterActivationError("hermes")).toBe(
@@ -66,6 +76,7 @@ describe("adapter selection and activation", () => {
     expect(indexSource).toContain('defaultAdapterId === "acp"');
     expect(indexSource).toContain("ensureRegisteredAdapter(registry, \"hermes\"");
     expect(indexSource).toContain("ensureRegisteredAdapter(registry, \"openclaw\"");
+    expect(indexSource).toContain("ensureRegisteredAdapter(registry, \"codex\"");
     expect(indexSource).toContain('adapterActivationError("hermes")');
     expect(indexSource).toContain('adapterActivationError("openclaw")');
     expect(indexSource).toContain("query.ownerId = queryOwnerId");

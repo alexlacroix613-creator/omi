@@ -190,7 +190,11 @@ export class AcpRuntimeAdapter implements RuntimeAdapter {
 
     const configuredCommand = this.command ?? (this.envCommandName ? process.env[this.envCommandName] : undefined);
     const command = configuredCommand?.trim();
-    if (this.adapterId !== "acp" && !command) {
+    // `acp` (Claude) and `codex` (ChatGPT) are bundled Node entry points, not
+    // user-installed external commands, so they launch via `nodeBin acpEntry`
+    // with the full environment rather than requiring a shell command.
+    const usesBundledNodeEntry = this.adapterId === "acp" || this.adapterId === "codex";
+    if (!usesBundledNodeEntry && !command) {
       throw new Error(`${this.adapterId} adapter requires ${this.envCommandName ?? "command"}`);
     }
 

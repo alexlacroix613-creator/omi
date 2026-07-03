@@ -5,11 +5,12 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc && cp src/patched-acp-entry.mjs dist/patched-acp-entry.mjs",
+    "build": "tsc && cp src/patched-acp-entry.mjs dist/patched-acp-entry.mjs && cp src/patched-codex-entry.mjs dist/patched-codex-entry.mjs",
     "start": "node dist/index.js",
     "test": "vitest run"
   },
   "dependencies": {
+    "@agentclientprotocol/codex-acp": "^1.1.0",
     "@mariozechner/pi-coding-agent": "^0.67.2",
     "@playwright/mcp": "^0.0.68",
     "@zed-industries/claude-agent-acp": "^0.18.0",

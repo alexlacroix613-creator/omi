@@ -48,6 +48,7 @@ import type {
 } from "./protocol.js";
 import { requestIdFor } from "./protocol.js";
 import { startOAuthFlow, type OAuthFlowHandle } from "./oauth-flow.js";
+import { readCodexAuth } from "./codex-auth.js";
 import type { PromptBlock, RuntimeAdapter } from "./adapters/interface.js";
 import { detectImageMimeType } from "./mime-detect.js";
 import { AcpError, AcpRuntimeAdapter } from "./adapters/acp.js";
@@ -925,8 +926,27 @@ async function main(): Promise<void> {
       onCreate: (adapter) => localAcpAdapters.add(adapter),
     });
   };
+  const ensureCodexAdapter = async (): Promise<boolean> => {
+    return ensureRegisteredAdapter(registry, "codex", {
+      log: logErr,
+      maxWorkers: 1,
+      onCreate: (adapter) => localAcpAdapters.add(adapter),
+    });
+  };
   const hermesAvailable = await ensureHermesAdapter();
   const openClawAvailable = await ensureOpenClawAdapter();
+  // Codex is bundled, so it is always registerable. ChatGPT authentication is
+  // gated at query time by ~/.codex/auth.json (written by `codex login`); the
+  // desktop app owns the connect UX. We read auth state fresh here purely for
+  // startup diagnostics — never cache it, since tokens rotate.
+  const codexAvailable = await ensureCodexAdapter();
+  if (defaultAdapterId === "codex") {
+    const codexAuth = readCodexAuth();
+    logErr(
+      `Codex adapter default; ChatGPT auth ${codexAuth.hasAccessToken ? "present" : "absent"} at ${codexAuth.path}` +
+      (codexAuth.hasAccessToken ? "" : " — user must connect their ChatGPT account (codex login) before queries will run")
+    );
+  }
   if (!piMonoAvailable && defaultAdapterId === "pi-mono") {
     const msg = "pi-mono mode requires OMI_AUTH_TOKEN (Firebase ID token); refusing to start";
     logErr(msg);
@@ -941,6 +961,12 @@ async function main(): Promise<void> {
   }
   if (!openClawAvailable && defaultAdapterId === "openclaw") {
     const msg = adapterActivationError("openclaw") ?? "OpenClaw adapter is unavailable.";
+    logErr(msg);
+    send({ type: "error", message: msg });
+    process.exit(1);
+  }
+  if (!codexAvailable && defaultAdapterId === "codex") {
+    const msg = adapterActivationError("codex") ?? "Codex adapter is unavailable.";
     logErr(msg);
     send({ type: "error", message: msg });
     process.exit(1);
