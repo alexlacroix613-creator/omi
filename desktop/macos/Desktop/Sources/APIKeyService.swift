@@ -50,9 +50,12 @@ enum BYOKProvider: String, CaseIterable {
 }
 
 /// Consumer AI accounts a user can connect for desktop chat, surfaced in the
-/// "Member Accounts" settings card. Claude is wired to the real ACP/Claude Code
-/// bridge (`ChatProvider.BridgeMode.userClaude`); ChatGPT and Grok have no
-/// desktop harness yet and are shown as honest "coming soon" placeholders.
+/// "Member Accounts" settings card. Claude and ChatGPT are wired to real
+/// desktop harnesses (`ChatProvider.BridgeMode.userClaude` /
+/// `.userChatGPT`, the latter via the Codex CLI); Grok has no desktop
+/// harness yet and is shown as an honest, disabled "coming soon" placeholder
+/// (see `aiAccountRow(provider:comingSoon:...)` in
+/// SettingsContentView+Advanced.swift — audited 2026-07-03, dream backlog #6).
 enum ExternalAIAccountProvider: String, CaseIterable, Identifiable {
     case claude
     case chatgpt

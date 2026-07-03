@@ -117,12 +117,50 @@ Legend: Value 5 = biggest win. Effort S = <1 file/hour, M = a few files, L = mul
   must stream status back. Design an agent that reports session/update events like the
   local bridge does, instead of a headless VM. Keep as an L design item.
 
-### 6. "Coming soon" provider placeholders may be dead toggles
+### 6. [DONE this iteration] "Coming soon" provider placeholders may be dead toggles
 - **Value 3 · Effort S · Risk Low**
-- `APIKeyService.swift:55` — some providers "aren't wired into the desktop harness yet
-  and are shown as honest 'coming soon' placeholders." Confirm each placeholder is
-  either hidden or clearly disabled (not tappable-but-inert).
-- Fix: audit the provider list; gate placeholders behind a `.disabled(true)` + label.
+- Was: `APIKeyService.swift:55` claimed "ChatGPT and Grok have no desktop harness yet
+  and are shown as honest 'coming soon' placeholders" — audit needed to confirm no
+  placeholder was a silently-inert tap target.
+- Audited every provider surface: `ExternalAIAccountProvider` (Member Accounts card,
+  `SettingsContentView+Advanced.swift:743` `aiAccountsCard`/`aiAccountRow`),
+  `AIProvider.all` (AI Provider picker, `Providers/AIProvider.swift`),
+  `RealtimeOmniProvider` (Voice Model picker, `RealtimeOmni/RealtimeOmniSettings.swift`),
+  `BYOKProvider` (Developer Keys page) — grepped the whole `Sources` tree for
+  "coming soon"/"comingSoon" to make sure no other placeholder exists outside these.
+  Findings, provider by provider:
+  - **Claude** — real, wired (`ChatProvider.BridgeMode.userClaude`, ACP bridge). Honest.
+  - **ChatGPT** — real, wired (`BridgeMode.userChatGPT` / Codex CLI). Verified
+    `startChatGPTAuth()` runs an actual `codex login` subprocess and
+    `disconnectChatGPT()` moves the real `~/.codex/auth.json` aside — not a stub.
+    Honest, and NOT a "coming soon" row (`comingSoon: false`).
+  - **Grok** — the only real placeholder. `comingSoon: true` → the Connect button is
+    `.disabled(comingSoon)`, so it cannot be tapped at all (not "tappable-but-inert").
+    Label reads "Coming soon" with an explanatory subtitle. Honest.
+  - **Hermes / OpenClaw** (AI Provider picker) — both wired to real local bridges.
+  - **RealtimeOmniProvider** (auto/Gemini/GPT Realtime) — all three resolve to real
+    models; no Grok/ChatGPT-subscription option is offered here at all (so nothing to
+    mislabel — this is backlog item 8's gap, not a dead toggle).
+  - **BYOKProvider** (openai/anthropic/gemini/deepgram, Developer Keys) — all four
+    fully functional BYOK fields.
+  - No occurrence of the old "cosmetic Grok connect" pattern (a button that flips a
+    UserDefaults flag with no runtime effect) exists anywhere in `Sources`.
+  - **Conclusion: no dead toggle found.** The one placeholder (Grok) was already
+    correctly disabled before this pass.
+- Fixed instead (found during the audit, not a UI dead-toggle but the same rot): two
+  doc comments (`APIKeyService.swift:52-58`, `SettingsContentView+Advanced.swift:739-745`)
+  still said ChatGPT "has no desktop harness yet" / renders as a disabled "coming
+  soon" row — stale since the ChatGPT bridge shipped, and misleading for any future
+  dev deciding whether to touch that row. Reworded both to state ChatGPT is real and
+  only Grok is the placeholder.
+- Also fixed `Tests/PiMonoWiringTests.swift:239` (`testAIProviderAllContainsSupportedProviders`)
+  — asserted `AIProvider.all` excluded `"chatgpt"`, which was **failing at HEAD before
+  this change** (confirmed via `git stash`). Same staleness as the doc comments: a
+  test lying about which providers are supported. Updated the expected array to
+  include `"chatgpt"` in its real position.
+- Diff: 2 doc comments + 1 test assertion + this backlog entry. No UI/logic changed.
+- Tests: `BYOKPaywallTests` (9/9), `PiMonoWiringTests` (24/24, including the fixed
+  assertion), `StartupWarmupPolicyTests` (35/35) — 68/68 total, 0 failures.
 
 ### 7. Rap slips the music filter (documented honest limitation)
 - **Value 3 · Effort M · Risk Med**

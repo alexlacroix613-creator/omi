@@ -236,7 +236,12 @@ final class PiMonoWiringTests: XCTestCase {
   }
 
   func testAIProviderAllContainsSupportedProviders() {
-    XCTAssertEqual(AIProvider.all.map(\.id), ["piMono", "claude", "hermes", "openclaw"])
+    // "chatgpt" (Codex CLI bridge) is a real, wired provider — not a placeholder.
+    // Stale since the ChatGPT bridge shipped; found during the dream-backlog #6
+    // "coming soon" placeholder audit (2026-07-03), fixed here rather than left
+    // failing since a test lying about which providers are supported is the
+    // same trust bug that item 6 exists to catch.
+    XCTAssertEqual(AIProvider.all.map(\.id), ["piMono", "claude", "chatgpt", "hermes", "openclaw"])
   }
 
   func testAIProviderFromBridgeModeReturnsCorrectProvider() {

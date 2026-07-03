@@ -737,9 +737,11 @@ extension SettingsContentView {
   // MARK: - Member Accounts (consumer AI account connect)
 
   /// "Member Accounts" card: connect a paid consumer account where Omi has a
-  /// local bridge. Claude wires to the real Claude Code / ACP bridge; ChatGPT
-  /// and Grok have no desktop harness yet and render as honest, disabled
-  /// "coming soon" rows.
+  /// local bridge. Claude wires to the real Claude Code / ACP bridge and
+  /// ChatGPT wires to the real Codex CLI bridge — both have working
+  /// Connect/Disconnect actions. Grok has no desktop harness yet and renders
+  /// as an honest, disabled "coming soon" row (button is `.disabled(true)`,
+  /// so it cannot be tapped — not a silent no-op toggle).
   var aiAccountsCard: some View {
     settingsCard(settingId: "aichat.accounts") {
       VStack(alignment: .leading, spacing: 14) {
