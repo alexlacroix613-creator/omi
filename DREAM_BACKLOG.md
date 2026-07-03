@@ -265,12 +265,95 @@ Legend: Value 5 = biggest win. Effort S = <1 file/hour, M = a few files, L = mul
     `VoiceProviderSelectionTests` (8/8), `PiMonoWiringTests` (24/24),
     `BYOKPaywallTests` (9/9) — all green, confirming the new UI wiring compiles and
     the native realtime path is untouched.
-  - **Queued next: Pass 2 (M, medium risk)** — build
-    `SubscriptionCascadeCoordinator` gluing `LocalTranscriptionService` →
-    `ChatProvider(.userChatGPT)` → `FloatingBarVoicePlaybackService`, flip
-    `VoiceEngineSelection.isAvailable(.chatGPTSubscriptionCascade, ...)` to
-    `chatGPTConnected`, enable the row. Coordinator unit tests with fakes per the
-    design doc §5; manual end-to-end verification needs a real `codex login`.
+- **Pass 2 (M) done this iteration:** the working loop.
+  - New `Sources/RealtimeOmni/SubscriptionCascadeCoordinator.swift` — turn-lifecycle
+    state machine (`.idle` → `.thinking(startedAt:)` → `.speaking` → `.idle`, or
+    `.failed(CascadeTurnError)`) that takes an already-finalized transcript, checks
+    `CascadeTurnError` preconditions (ChatGPT connected, `codex` binary present,
+    transcript non-blank) via a pure `precondition(transcript:chatGPTConnected:
+    codexInstalled:)`, then runs the reasoning leg and speaks the reply. Owns no I/O
+    itself — the three legs (ChatGPT connection check, reasoning, speak) are injected
+    closures; `init()` wires the real defaults (a **dedicated**
+    `ChatProvider(bridgeHarnessOverride: .codex)` instance — separate from the app's
+    main chat `ChatProvider` so a cascade voice turn never touches the visible chat's
+    bridge mode/messages — plus `FloatingBarVoicePlaybackService.shared.speakOneShot`).
+    `SubscriptionCascadeCoordinator.shared` is the runtime singleton. A second `runTurn`
+    call while `.thinking`/`.speaking` is dropped (never stacks); `.failed` self-heals
+    on the next `runTurn` (no manual dismiss required, though `reset()` exists for one).
+    Mid-turn auth expiry (connection flag flips false between the precondition check and
+    the reasoning leg returning) is classified as the same `.chatGPTNotConnected` story
+    as a cold-start disconnect, per design doc §4d.
+  - `VoiceEngineSelection.isAvailable(.chatGPTSubscriptionCascade, chatGPTConnected:)`
+    now returns `chatGPTConnected` (was hard-coded `false` in Pass 1) —
+    `SubscriptionCascadeCoordinator` exists to actually run the loop now.
+    `chatGPTCascadeSubtitle` copy updated from "Coming soon" to describe the live
+    tradeoff (thinking, not full realtime; no new OpenAI API bill).
+  - `voiceEngineChatGPTCascadeRow` (`SettingsContentView+Advanced.swift`) is a real
+    selector now, not the Pass 1 `.disabled(true)` placeholder: a new
+    `@AppStorage("voiceEngineSelection")` (`SettingsPage.swift`) persists the user's
+    choice; the button writes it (gated by the same `VoiceEngineSelection.isAvailable`
+    the runtime checks, so it can't be tappable-but-inert), and shows a checkmark +
+    "Switch back" once selected.
+  - `PushToTalkManager` wiring — the actual runtime hookup, not just a settings toggle:
+    a new `static func effectiveVoiceEngine()` reads the persisted selection +
+    `CodexAccountAuth.isConnected()` fresh on every call (no caching, so a
+    connect/disconnect between two PTT turns takes effect immediately). Two call sites:
+    `startAudioTranscription()` skips native-realtime-hub mode and forces the omni-STT
+    path when the cascade engine is effective (the hub is BYOK/Omi-token funded, never
+    the ChatGPT plan, so a cascade turn must never enter hub mode); `sendQuery(_:
+    wasFollowUp:)` routes the finalized transcript to
+    `SubscriptionCascadeCoordinator.shared.runTurn(transcript:)` instead of the normal
+    floating-bar pill/window dispatch. Both branches are no-ops for every existing user
+    — nobody had `voiceEngineSelection = chatGPTSubscriptionCascade` persisted before
+    this change, so `effectiveVoiceEngine()` always resolved to `.nativeRealtimeBYOK`
+    and behavior is byte-for-byte unchanged unless a user explicitly connects ChatGPT
+    AND selects the row.
+  - **Honest limitation vs. the design doc's literal wording:** §4b describes the loop
+    as "on-device STT (Parakeet)". In this codebase `LocalTranscriptionService`
+    (Parakeet) is wired ONLY into the passive background memory-transcription pipeline
+    (`AppState+Transcription.swift`) — the interactive PTT command loop this feature
+    hooks into has never used it; it uses the existing omni-STT relay (falls back to
+    Deepgram) that already ran for every PTT turn regardless of voice engine. The
+    coordinator is STT-technology-agnostic by design (it takes an already-finalized
+    transcript string, per §4b/§5's "receive final transcript from the STT service" /
+    "fake STT source"), so this doesn't weaken the "no new OpenAI Platform bill" claim
+    — the STT leg's cost was already being paid before this feature existed, unaffected
+    by which reasoning engine a turn uses. Wiring literal on-device Parakeet into the
+    interactive command loop (new mic-capture plumbing, different windowing than the
+    10 s background-memory windows) is a separate, larger piece of work, not attempted
+    this pass.
+  - **Tests:** new `Tests/SubscriptionCascadeCoordinatorTests.swift` (20/20) — pure
+    `precondition` cases, `CascadeTurnError.userMessage` copy, happy path
+    (transcript → reason → speak → idle), `.thinking` observed mid-flight via a
+    manually-released `CheckedContinuation` (no sleeps), every precondition failure
+    never touches reason/speak, provider-error vs. mid-turn-auth-expiry
+    classification, never-stacks-a-second-turn (deterministic, continuation-gated),
+    `reset()`, and self-heal after a prior failure. `Tests/VoiceEngineSelectionTests.swift`
+    updated for Pass 2 semantics (11/11 — was 10/10 in Pass 1; the "always false" /
+    "always says coming soon" assertions were rewritten to assert the new
+    connection-tracking behavior, the same kind of intentional test update as item 6's
+    `testAIProviderAllContainsSupportedProviders` fix). Regression, unchanged and
+    green: `VoiceProviderSelectionTests` (8/8), `PiMonoWiringTests` (24/24),
+    `BYOKPaywallTests` (9/9), `CodexAccountAuthTests` (7/7). 79/79 total across all
+    six suites, 0 failures. The full package (`swift test --filter
+    SubscriptionCascadeCoordinatorTests`) also compiles clean, confirming the
+    `SettingsPage.swift` / `SettingsContentView+Advanced.swift` / `PushToTalkManager
+    .swift` edits build correctly, not just the isolated coordinator file.
+  - **NOT verified this pass (needs a live session, out of scope per the runtime
+    guardrails):** a real `codex login` + connected ChatGPT account; actually holding
+    ⌥, speaking, and hearing a reply come back through the ChatGPT/Codex bridge; a
+    real mid-turn token expiry; confirming the settings row's checkmark/"Switch back"
+    round-trips visually in the running app; confirming `startRealtimeHubCapture` is
+    genuinely never entered when the cascade is selected (traced by code reading, not
+    an instrumented run). Manual QA script for whoever runs this next: connect ChatGPT
+    in Advanced → AI Setup, tap "Use this" on the ChatGPT-plan row, hold ⌥ and speak,
+    confirm a spoken reply comes back and no floating-bar pill/window opened; then
+    disconnect ChatGPT and confirm the row shows "Connect ChatGPT first" again and a
+    PTT turn falls back to native realtime.
+  - **Pass 3 (S–M, optional polish, deferrable) still queued:** swap system `AVSpeech`
+    for the chunked neural-TTS backend `FloatingBarVoicePlaybackService` already
+    supports (the `.openAI` branch of `speakOneShot`), so the cascade voice sounds less
+    robotic. Independent of everything above; ship only if Alex wants nicer audio.
 
 ---
 

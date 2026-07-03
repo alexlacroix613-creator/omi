@@ -42,6 +42,24 @@ extension Notification.Name {
 class PushToTalkManager: ObservableObject {
   static let shared = PushToTalkManager()
 
+  /// The voice engine actually in effect for the NEXT PTT turn (DREAM_BACKLOG
+  /// item 8 Pass 2; docs-fork/VOICE_CHATGPT_SUBSCRIPTION_DESIGN.md §4c/§4d).
+  /// Reads the persisted `voiceEngineSelection` and the live ChatGPT
+  /// connection state FRESH on every call — deliberately not cached, so a
+  /// user connecting/disconnecting ChatGPT (or a token expiring) between two
+  /// PTT turns takes effect on the very next one without an app restart.
+  /// Both `startAudioTranscription` (which STT path to use) and `sendQuery`
+  /// (where the finalized transcript gets its reasoning) call this so they
+  /// can never disagree about which engine is live.
+  static func effectiveVoiceEngine() -> VoiceEngineSelection.Engine {
+    let stored =
+      VoiceEngineSelection.Engine(
+        rawValue: UserDefaults.standard.string(forKey: "voiceEngineSelection") ?? "")
+      ?? .nativeRealtimeBYOK
+    return VoiceEngineSelection.effectiveEngine(
+      storedSelection: stored, chatGPTConnected: CodexAccountAuth.isConnected())
+  }
+
   // MARK: - State
 
   enum PTTState {
@@ -879,6 +897,23 @@ class PushToTalkManager: ObservableObject {
       }
       return
     }
+
+    // ChatGPT-subscription voice cascade (DREAM_BACKLOG item 8 Pass 2, see
+    // docs-fork/VOICE_CHATGPT_SUBSCRIPTION_DESIGN.md §4c): this turn's
+    // reasoning + spoken reply run through `SubscriptionCascadeCoordinator`
+    // (pinned to the ChatGPT plan) instead of the floating bar's normal
+    // pill/window dispatch. Same finalized transcript either engine would
+    // have produced — only the brain + auth differ. No-op branch for every
+    // user who hasn't explicitly selected this engine (see
+    // `effectiveVoiceEngine` / `VoiceEngineSelection.effectiveEngine`).
+    if Self.effectiveVoiceEngine() == .chatGPTSubscriptionCascade {
+      activeTracer = nil
+      let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+      log("PushToTalkManager: routing voice turn → ChatGPT-subscription cascade (\(q.count) chars)")
+      Task { await SubscriptionCascadeCoordinator.shared.runTurn(transcript: q) }
+      return
+    }
+
     // QueryTracer: hand the PTT tracer to the floating-bar query via TaskLocal so
     // routing, the LLM call, and TTS all record into this same trace. Ownership
     // moves out of activeTracer here; the unstructured Task spawned inside
@@ -953,6 +988,19 @@ class PushToTalkManager: ObservableObject {
     // Voice follow-up to an agent: always use the omni STT (we need a transcript to
     // route to the agent), never the hub model — the hub would answer it itself.
     if followUpPill != nil {
+      _ = startOmniTranscription()
+      return
+    }
+
+    // ChatGPT-subscription voice cascade (DREAM_BACKLOG item 8 Pass 2): the
+    // native realtime hub is funded by a BYOK Platform key / Omi-managed
+    // token — never the user's ChatGPT plan — so a turn selected for the
+    // cascade engine must skip hub mode entirely and use the STT path that
+    // actually produces a transcript for `SubscriptionCascadeCoordinator` to
+    // reason over. No-op for every user who hasn't explicitly connected
+    // ChatGPT AND selected this engine (see `effectiveVoiceEngine`).
+    if Self.effectiveVoiceEngine() == .chatGPTSubscriptionCascade {
+      log("PushToTalkManager: ChatGPT-subscription cascade selected — using omni STT, skipping realtime hub")
       _ = startOmniTranscription()
       return
     }

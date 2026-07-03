@@ -288,6 +288,13 @@ struct SettingsContentView: View {
   // AI Chat settings
   @AppStorage("chatBridgeMode") var chatBridgeMode: String = "piMono"
   @AppStorage("realtimeOmniProvider") var realtimeOmniProvider: String = RealtimeOmniProvider.auto.rawValue
+  /// DREAM_BACKLOG item 8 Pass 2 — which `VoiceEngineSelection.Engine` the user
+  /// has picked for voice turns. Resolved through `VoiceEngineSelection
+  /// .effectiveEngine` everywhere it's read (never trusted raw), so a stale
+  /// cascade selection with no live ChatGPT connection safely falls back to
+  /// native realtime instead of routing traffic through a dead engine.
+  @AppStorage("voiceEngineSelection")
+  var voiceEngineSelection: String = VoiceEngineSelection.Engine.nativeRealtimeBYOK.rawValue
   @AppStorage("askModeEnabled") var askModeEnabled = false
   @AppStorage("claudeMdEnabled") var claudeMdEnabled = true
   @AppStorage("projectClaudeMdEnabled") var projectClaudeMdEnabled = true

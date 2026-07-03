@@ -964,25 +964,45 @@ extension SettingsContentView {
     }
   }
 
-  // MARK: - Voice Engine: ChatGPT-subscription cascade (Pass 1 placeholder)
+  // MARK: - Voice Engine: ChatGPT-subscription cascade (Pass 2 — live)
 
-  /// Honest, visible-but-disabled row for the "voice on my ChatGPT plan" engine
-  /// from DREAM_BACKLOG item 8 / docs-fork/VOICE_CHATGPT_SUBSCRIPTION_DESIGN.md.
-  /// Mirrors the exact `aiAccountRow` Grok placeholder pattern audited in item 6:
-  /// the button is `.disabled(true)` (not tappable-but-inert), the label says
-  /// "Coming soon," and the subtitle is honest about what's missing — here, that
-  /// Pass 2's `SubscriptionCascadeCoordinator` hasn't been built yet, per
-  /// `VoiceEngineSelection.isAvailable`. Reads (never writes) the real ChatGPT
-  /// connection gate so the subtitle tells the user exactly what's already true.
+  /// The engine Pass 2 actually wires (`PushToTalkManager.effectiveVoiceEngine`
+  /// reads the same persisted key + gate, so this row can never silently drift
+  /// from what a PTT turn does). Falls back to native whenever the stored
+  /// selection isn't currently runnable — see `VoiceEngineSelection.effectiveEngine`.
+  private var effectiveVoiceEngine: VoiceEngineSelection.Engine {
+    let stored = VoiceEngineSelection.Engine(rawValue: voiceEngineSelection) ?? .nativeRealtimeBYOK
+    return VoiceEngineSelection.effectiveEngine(
+      storedSelection: stored, chatGPTConnected: chatProvider?.isChatGPTConnected == true)
+  }
+
+  /// Real, selectable row for the "voice on my ChatGPT plan" engine
+  /// (DREAM_BACKLOG item 8 / docs-fork/VOICE_CHATGPT_SUBSCRIPTION_DESIGN.md).
+  /// Pass 2 shipped `SubscriptionCascadeCoordinator`, so this is no longer the
+  /// Pass 1 `.disabled(true)` placeholder audited in item 6 — the button now
+  /// actually persists `voiceEngineSelection`, gated by the same
+  /// `VoiceEngineSelection.isAvailable` the runtime checks, so it can never be
+  /// tappable-but-inert. Reads the real ChatGPT connection gate for the subtitle
+  /// and for whether the row can be selected at all.
   @ViewBuilder
   var voiceEngineChatGPTCascadeRow: some View {
     let chatGPTConnected = chatProvider?.isChatGPTConnected == true
+    let available = VoiceEngineSelection.isAvailable(
+      .chatGPTSubscriptionCascade, chatGPTConnected: chatGPTConnected)
+    let isSelected = effectiveVoiceEngine == .chatGPTSubscriptionCascade
 
     HStack(spacing: 12) {
       VStack(alignment: .leading, spacing: 4) {
-        Text(VoiceEngineSelection.Engine.chatGPTSubscriptionCascade.displayName)
-          .scaledFont(size: 14, weight: .medium)
-          .foregroundColor(OmiColors.textPrimary)
+        HStack(spacing: 6) {
+          Text(VoiceEngineSelection.Engine.chatGPTSubscriptionCascade.displayName)
+            .scaledFont(size: 14, weight: .medium)
+            .foregroundColor(OmiColors.textPrimary)
+          if isSelected {
+            Image(systemName: "checkmark.circle.fill")
+              .scaledFont(size: 12)
+              .foregroundColor(OmiColors.purplePrimary)
+          }
+        }
 
         Text(VoiceEngineSelection.chatGPTCascadeSubtitle(chatGPTConnected: chatGPTConnected))
           .scaledFont(size: 12)
@@ -992,12 +1012,15 @@ extension SettingsContentView {
 
       Spacer()
 
-      Button("Coming soon", action: {})
-        .buttonStyle(.borderedProminent)
-        .controlSize(.small)
-        .disabled(
-          !VoiceEngineSelection.isAvailable(
-            .chatGPTSubscriptionCascade, chatGPTConnected: chatGPTConnected))
+      Button(isSelected ? "Switch back" : (available ? "Use this" : "Connect ChatGPT first")) {
+        voiceEngineSelection =
+          (isSelected
+            ? VoiceEngineSelection.Engine.nativeRealtimeBYOK
+            : VoiceEngineSelection.Engine.chatGPTSubscriptionCascade).rawValue
+      }
+      .buttonStyle(.borderedProminent)
+      .controlSize(.small)
+      .disabled(!available && !isSelected)
     }
   }
 

@@ -2,9 +2,11 @@ import XCTest
 
 @testable import Omi_Computer
 
-/// Verifies the pure Pass 1 logic for `VoiceEngineSelection` — the seam Pass 2's
-/// `SubscriptionCascadeCoordinator` and the Voice settings UI will both depend on.
-/// See docs-fork/VOICE_CHATGPT_SUBSCRIPTION_DESIGN.md §4b/§6.
+/// Verifies the pure logic for `VoiceEngineSelection` — the seam
+/// `SubscriptionCascadeCoordinator` and the Voice settings UI both depend on.
+/// Updated for Pass 2: the cascade engine now tracks real ChatGPT connection
+/// state instead of being hard-coded unavailable. See
+/// docs-fork/VOICE_CHATGPT_SUBSCRIPTION_DESIGN.md §4b/§6.
 final class VoiceEngineSelectionTests: XCTestCase {
 
   // MARK: Engine enum shape
@@ -36,10 +38,12 @@ final class VoiceEngineSelectionTests: XCTestCase {
       VoiceEngineSelection.isAvailable(.nativeRealtimeBYOK, chatGPTConnected: false))
   }
 
-  /// Pass 1's central guardrail: connecting ChatGPT must NOT flip the cascade
-  /// engine to available — no coordinator exists yet to actually run it.
-  func testIsAvailable_chatGPTSubscriptionCascade_alwaysFalseInPass1() {
-    XCTAssertFalse(
+  /// Pass 2's central guardrail: the cascade engine is available if and only
+  /// if ChatGPT is connected — `SubscriptionCascadeCoordinator` exists now, so
+  /// this seam must actually gate on the real signal instead of hard-coding
+  /// unavailable.
+  func testIsAvailable_chatGPTSubscriptionCascade_tracksChatGPTConnection() {
+    XCTAssertTrue(
       VoiceEngineSelection.isAvailable(.chatGPTSubscriptionCascade, chatGPTConnected: true))
     XCTAssertFalse(
       VoiceEngineSelection.isAvailable(.chatGPTSubscriptionCascade, chatGPTConnected: false))
@@ -47,13 +51,9 @@ final class VoiceEngineSelectionTests: XCTestCase {
 
   // MARK: chatGPTCascadeSubtitle
 
-  func testChatGPTCascadeSubtitle_mentionsComingSoonRegardlessOfConnection() {
-    XCTAssertTrue(
-      VoiceEngineSelection.chatGPTCascadeSubtitle(chatGPTConnected: true)
-        .localizedCaseInsensitiveContains("coming soon"))
-    XCTAssertTrue(
-      VoiceEngineSelection.chatGPTCascadeSubtitle(chatGPTConnected: false)
-        .localizedCaseInsensitiveContains("coming soon"))
+  func testChatGPTCascadeSubtitle_neverEmpty() {
+    XCTAssertFalse(VoiceEngineSelection.chatGPTCascadeSubtitle(chatGPTConnected: true).isEmpty)
+    XCTAssertFalse(VoiceEngineSelection.chatGPTCascadeSubtitle(chatGPTConnected: false).isEmpty)
   }
 
   func testChatGPTCascadeSubtitle_differsByConnectionState() {
@@ -81,14 +81,19 @@ final class VoiceEngineSelectionTests: XCTestCase {
     }
   }
 
-  /// Even a stored cascade selection (e.g. a stale UserDefaults value from a
-  /// future build, or manual tampering) must fall back to native — Pass 1 has
-  /// no coordinator to honor that selection with.
-  func testEffectiveEngine_cascadeSelectionFallsBackToNativeEvenWhenConnected() {
+  /// A stored cascade selection is honored once ChatGPT is connected — that's
+  /// the whole point of Pass 2 shipping `SubscriptionCascadeCoordinator`.
+  func testEffectiveEngine_cascadeSelectionHonoredWhenConnected() {
     XCTAssertEqual(
       VoiceEngineSelection.effectiveEngine(
         storedSelection: .chatGPTSubscriptionCascade, chatGPTConnected: true),
-      .nativeRealtimeBYOK)
+      .chatGPTSubscriptionCascade)
+  }
+
+  /// A stored cascade selection with NO ChatGPT connection (disconnected
+  /// after selecting, or a stale/tampered UserDefaults value) must fall back
+  /// to native — there is nothing to run the loop with.
+  func testEffectiveEngine_cascadeSelectionFallsBackToNativeWhenDisconnected() {
     XCTAssertEqual(
       VoiceEngineSelection.effectiveEngine(
         storedSelection: .chatGPTSubscriptionCascade, chatGPTConnected: false),
