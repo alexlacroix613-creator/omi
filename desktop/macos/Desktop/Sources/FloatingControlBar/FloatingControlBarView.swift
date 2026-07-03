@@ -1534,8 +1534,19 @@ private struct AgentMainChatView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        // spacing: 0 here on purpose — `stallBanner` is an unconditional
+        // stack member (its content only appears once the agent stalls) and
+        // a non-zero VStack `spacing` would leave a permanent gap around it
+        // even while hidden (SwiftUI reserves inter-item spacing for a
+        // conditional child regardless of whether it renders EmptyView).
+        // Each visible child supplies its own trailing gap via padding
+        // instead, so the stalled-vs-normal layout matches exactly except
+        // for the banner itself.
+        VStack(alignment: .leading, spacing: 0) {
             header
+                .padding(.bottom, 12)
+
+            stallBanner
 
             ChatScrollContainer(
                 bottomAnchorId: "agentBottom",
@@ -1554,6 +1565,7 @@ private struct AgentMainChatView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.bottom, 12)
 
             followUpInput
         }
@@ -1590,6 +1602,64 @@ private struct AgentMainChatView: View {
             Spacer(minLength: 8)
 
             statusBadge
+        }
+    }
+
+    /// Inline "may have stalled" banner in the popover header, mirroring
+    /// `NotchAgentListRow`'s subtitle narration but with a dedicated Stop
+    /// action — the header's own stop button is small and easy to miss once
+    /// an agent has gone quiet for a while. Re-evaluates every 5s like the
+    /// row does, and renders nothing until `AgentStallNarration` escalates
+    /// to `.stalled`.
+    private var stallBanner: some View {
+        TimelineView(.periodic(from: .now, by: 5)) { context in
+            let narration = AgentStallNarration.narrate(
+                isActive: isRunning,
+                startedAt: pill.createdAt,
+                lastActivityAt: pill.lastActivityAt,
+                now: context.date
+            )
+            if let narration, narration.level == .stalled {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .scaledFont(size: 10, weight: .bold)
+                        .foregroundColor(Color(red: 1.0, green: 0.42, blue: 0.42))
+
+                    Text(narration.text)
+                        .scaledFont(size: 11, weight: .medium)
+                        .foregroundColor(.white.opacity(0.82))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    Spacer(minLength: 8)
+
+                    Button {
+                        manager.stop(pillID: pill.id)
+                    } label: {
+                        Text("Stop")
+                            .scaledFont(size: 10, weight: .bold)
+                            .foregroundColor(.black.opacity(0.86))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Color(red: 1.0, green: 0.42, blue: 0.42))
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Stop stalled subagent")
+                    .help("Stop subagent")
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color(red: 1.0, green: 0.42, blue: 0.42).opacity(0.14))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color(red: 1.0, green: 0.42, blue: 0.42).opacity(0.35), lineWidth: 1)
+                )
+                .padding(.bottom, 12)
+            }
         }
     }
 

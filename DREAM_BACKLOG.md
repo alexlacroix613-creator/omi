@@ -43,13 +43,28 @@ Legend: Value 5 = biggest win. Effort S = <1 file/hour, M = a few files, L = mul
   with no small public wrapper yet. Worth a follow-up item if Alex wants one-tap
   jump-to-pill instead of just "it's now visible somewhere."
 
-### 3. Stall narration should also drive a Cancel/still-there prompt in the pill popover
+### 3. [DONE this iteration] Stall narration should also drive a Cancel/still-there prompt in the pill popover
 - **Value 4 · Effort S · Risk Low** — completes item 1 for users who open the pill.
-- The popover (`FloatingControlBarView` AgentChatPanel body, ~line 1534) shows the
-  live transcript but no stall banner. When `AgentStallNarration.level == .stalled`,
-  surface a small inline "Still working / Stop" banner wired to
-  `AgentPillsManager.stop(pillID:)` (already exists).
-- Fix: reuse `AgentStallNarration.narrate(...)` in the popover header via TimelineView.
+- Was: the popover (`AgentMainChatView` in `FloatingControlBarView.swift`, body
+  ~line 1536 — the backlog's "AgentChatPanel" name was stale, no such type
+  exists) showed the live transcript but no stall banner.
+- Built: a `stallBanner` computed view reusing the same
+  `AgentStallNarration.narrate(...)` + `TimelineView(.periodic(from:.now, by:5))`
+  pattern as `NotchAgentListRow`, inserted between `header` and
+  `ChatScrollContainer`. Renders nothing until `.level == .stalled`, then shows
+  the narration text + a dedicated red "Stop" pill wired to the existing
+  `AgentPillsManager.stop(pillID: UUID)` (verified signature — same call the
+  header's small stop button already uses). No new pure logic, so no new
+  tests; `AgentStallNarrationTests` (8/8) still pass and the module rebuilds
+  clean.
+- Discovered/fixed in the same pass: naively adding `stallBanner` as a plain
+  child of the outer `VStack(spacing: 12)` leaves a permanent ~24pt dead gap
+  around it even when hidden — SwiftUI reserves inter-item spacing for a
+  conditional child regardless of whether it renders `EmptyView`. Fixed by
+  setting the VStack to `spacing: 0` and giving `header` / `ChatScrollContainer`
+  their own `.padding(.bottom, 12)`, with the banner supplying its own
+  `.padding(.bottom, 12)` only when visible — normal (non-stalled) layout is
+  now pixel-identical to before this change.
 
 ### 4. Cloud VM Execute path (AgentVMService) is invisible and can silently die
 - **Value 4 · Effort M · Risk Med** — the true "ghosting cloud VM" path.
