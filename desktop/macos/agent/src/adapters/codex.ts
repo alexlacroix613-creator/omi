@@ -19,19 +19,22 @@ export interface CodexRuntimeAdapterOptions {
  * full (Anthropic-key-stripped) environment so codex-acp can locate the user's
  * ChatGPT credentials at ~/.codex/auth.json via $HOME.
  *
- * Capability profile mirrors OpenClaw's tool-less shape: codex-acp advertises
- * `mcpCapabilities.acp:false`, so per-session Omi (command/stdio) MCP servers
- * are not passed through (sessionMcpServersMode:"empty") to guarantee session
- * creation succeeds. Codex brings its own coding tools; Omi-tool integration is
- * a follow-up. Model switching is disabled because Codex model ids differ from
- * Omi's Claude aliases.
+ * Omi tools reach Codex over an HTTP-transport MCP server: codex-acp advertises
+ * `mcpCapabilities.acp:false` (it rejects MCP proxied over the ACP transport)
+ * but `mcpCapabilities.http:true`, and maps an HTTP MCP entry to
+ * `{ url, http_headers }` in the Codex session config. The bridge starts a
+ * loopback, bearer-token-protected HTTP MCP server (see `omi-tools-http.ts`)
+ * and injects its entry via `buildMcpServers` when the adapter is "codex", so
+ * per-session MCP servers must be passed through (sessionMcpServersMode:
+ * "passthrough"). Model switching is disabled because Codex model ids differ
+ * from Omi's Claude aliases.
  */
 export class CodexRuntimeAdapter extends AcpRuntimeAdapter {
   constructor(options: CodexRuntimeAdapterOptions = {}) {
     super({
       adapterId: "codex",
       acpEntry: join(__dirname, "..", "patched-codex-entry.mjs"),
-      sessionMcpServersMode: "empty",
+      sessionMcpServersMode: "passthrough",
       supportsSessionSetModel: false,
       log: options.log,
     });

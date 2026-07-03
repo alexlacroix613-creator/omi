@@ -76,6 +76,10 @@ import {
 } from "./runtime/control-tools.js";
 import { SqliteAgentStore } from "./runtime/sqlite-store.js";
 import { configuredPiMonoMaxWorkers } from "./runtime/worker-pool.js";
+import {
+  startOmiToolsHttpServer,
+  type OmiToolsHttpServerHandle,
+} from "./omi-tools-http.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -147,6 +151,26 @@ function agentStateDir(): string {
 
 let omiToolsPipePath = "";
 let omiToolsClients: Socket[] = [];
+
+// Lazily-started loopback HTTP MCP server that exposes Omi tools to the Codex
+// adapter (codex-acp rejects command/stdio MCP configs but accepts HTTP). One
+// per bridge process; started on the first Codex query.
+let codexToolsHttp: OmiToolsHttpServerHandle | null = null;
+let codexToolsHttpStarting: Promise<OmiToolsHttpServerHandle> | null = null;
+async function ensureCodexToolsHttpServer(): Promise<OmiToolsHttpServerHandle> {
+  if (codexToolsHttp) return codexToolsHttp;
+  if (!codexToolsHttpStarting) {
+    codexToolsHttpStarting = startOmiToolsHttpServer({
+      bridgePipePath: omiToolsPipePath,
+      adapterId: "codex",
+      log: logErr,
+    }).then((handle) => {
+      codexToolsHttp = handle;
+      return handle;
+    });
+  }
+  return codexToolsHttpStarting;
+}
 let agentControlToolContext: AgentControlToolContext | undefined;
 const activeControlToolOwnersByRequest = new Map<string, string>();
 const activeControlToolOwnersByRun = new Map<string, string>();
@@ -591,12 +615,21 @@ async function initializeAcp(): Promise<void> {
 
 // --- MCP server config builder ---
 
-type McpServerConfig = {
+type McpStdioServerConfig = {
   name: string;
   command: string;
   args: string[];
   env: Array<{ name: string; value: string }>;
 };
+
+type McpHttpServerConfig = {
+  name: string;
+  type: "http";
+  url: string;
+  headers: Array<{ name: string; value: string }>;
+};
+
+type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
 
 function buildMcpServers(
   mode: string,
@@ -605,6 +638,24 @@ function buildMcpServers(
   context?: McpServerBuildContext
 ): McpServerConfig[] {
   const servers: McpServerConfig[] = [];
+  const adapterId = context?.adapterId ?? "acp";
+
+  // Codex (codex-acp) rejects command/stdio MCP configs but accepts an HTTP
+  // MCP server. Serve Omi tools over the loopback bearer-token HTTP endpoint
+  // instead of the stdio server, and skip stdio-only servers (Playwright)
+  // that Codex cannot spawn under its sandbox.
+  if (adapterId === "codex") {
+    if (context?.includeSwiftBackedTools !== false && codexToolsHttp) {
+      codexToolsHttp.setMode(mode === "ask" ? "ask" : "act");
+      servers.push({
+        name: "omi-tools",
+        type: "http",
+        url: codexToolsHttp.url,
+        headers: [{ name: "Authorization", value: `Bearer ${codexToolsHttp.token}` }],
+      });
+    }
+    return servers;
+  }
 
   if (context?.includeSwiftBackedTools !== false) {
     // omi-tools (stdio, connects back via Unix socket)
@@ -946,6 +997,14 @@ async function main(): Promise<void> {
       `Codex adapter default; ChatGPT auth ${codexAuth.hasAccessToken ? "present" : "absent"} at ${codexAuth.path}` +
       (codexAuth.hasAccessToken ? "" : " — user must connect their ChatGPT account (codex login) before queries will run")
     );
+    // Codex is the default harness: bring up the loopback HTTP MCP tools server
+    // now so tools are ready the moment the first (authenticated) query runs.
+    try {
+      await ensureCodexToolsHttpServer();
+      logErr("Codex omi-tools HTTP MCP server ready");
+    } catch (err) {
+      logErr(`Failed to start Codex omi-tools HTTP MCP server: ${err}`);
+    }
   }
   if (!piMonoAvailable && defaultAdapterId === "pi-mono") {
     const msg = "pi-mono mode requires OMI_AUTH_TOKEN (Firebase ID token); refusing to start";
@@ -1053,6 +1112,10 @@ async function main(): Promise<void> {
               if (!(await ensureOpenClawAdapter())) {
                 throw new Error(adapterActivationError("openclaw"));
               }
+            } else if (adapterId === "codex") {
+              // Start the loopback HTTP MCP tools server before the query so
+              // buildMcpServers can inject its URL into session/new.
+              await ensureCodexToolsHttpServer();
             }
             await facade.handleQuery(query);
           } finally {

@@ -528,7 +528,7 @@ describe("adapter capability matrix", () => {
       pinnedWorker: { status: "required" },
       modelSwitching: { status: "unsupported" },
       artifactEmission: { status: "unsupported" },
-      toolSupport: { status: "unsupported" },
+      toolSupport: { status: "required" },
       restartOrphanSemantics: { status: "required" },
     });
 
