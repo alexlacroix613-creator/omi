@@ -118,6 +118,10 @@ extension SettingsContentView {
         }
       }
 
+      aiAccountsCard
+
+      openRouterKeyCard(settingId: "aichat.openrouter")
+
       settingsCard(settingId: "aichat.provider") {
         VStack(alignment: .leading, spacing: 12) {
           HStack {
@@ -721,6 +725,206 @@ extension SettingsContentView {
           }
         }
       }
+    }
+  }
+
+  // MARK: - Member Accounts (consumer AI account connect)
+
+  /// "Member Accounts" card: connect a paid consumer account where Omi has a
+  /// local bridge. Claude wires to the real Claude Code / ACP bridge; ChatGPT
+  /// and Grok have no desktop harness yet and render as honest, disabled
+  /// "coming soon" rows.
+  var aiAccountsCard: some View {
+    settingsCard(settingId: "aichat.accounts") {
+      VStack(alignment: .leading, spacing: 14) {
+        HStack(spacing: 10) {
+          Image(systemName: "person.crop.circle.badge.checkmark")
+            .scaledFont(size: 16)
+            .foregroundColor(OmiColors.textTertiary)
+
+          VStack(alignment: .leading, spacing: 3) {
+            Text("Member Accounts")
+              .scaledFont(size: 15, weight: .semibold)
+              .foregroundColor(OmiColors.textPrimary)
+            Text("Connect a paid consumer account where Omi has a local bridge.")
+              .scaledFont(size: 12)
+              .foregroundColor(OmiColors.textTertiary)
+          }
+
+          Spacer()
+        }
+
+        Divider()
+
+        aiAccountRow(
+          provider: .claude,
+          isConnected: chatProvider?.isClaudeConnected == true,
+          subtitle: "Use your Claude Pro/Max subscription via the local Claude Code bridge.",
+          connectTitle: chatProvider?.isClaudeConnected == true ? "Reconnect" : "Connect",
+          comingSoon: false,
+          connectAction: connectClaudeAccount,
+          disconnectAction: {
+            Task { await chatProvider?.disconnectClaude() }
+          }
+        )
+
+        Divider()
+
+        aiAccountRow(
+          provider: .chatgpt,
+          isConnected: false,
+          subtitle: "Coming soon — requires a desktop harness for your ChatGPT account.",
+          connectTitle: "Coming soon",
+          comingSoon: true,
+          connectAction: {},
+          disconnectAction: {}
+        )
+
+        Divider()
+
+        aiAccountRow(
+          provider: .grok,
+          isConnected: false,
+          subtitle: "Coming soon — requires a desktop harness for your Grok (xAI) account.",
+          connectTitle: "Coming soon",
+          comingSoon: true,
+          connectAction: {},
+          disconnectAction: {}
+        )
+      }
+    }
+    .onAppear {
+      chatProvider?.checkClaudeConnectionStatus()
+    }
+  }
+
+  private func aiAccountRow(
+    provider: ExternalAIAccountProvider,
+    isConnected: Bool,
+    subtitle: String,
+    connectTitle: String,
+    comingSoon: Bool,
+    connectAction: @escaping () -> Void,
+    disconnectAction: @escaping () -> Void
+  ) -> some View {
+    HStack(spacing: 12) {
+      ConnectorBrandIcon(
+        brand: connectorBrand(for: provider),
+        size: 24,
+        cornerRadius: 6
+      )
+
+      VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: 6) {
+          Text(provider.displayName)
+            .scaledFont(size: 14, weight: .medium)
+            .foregroundColor(OmiColors.textPrimary)
+
+          if isConnected {
+            Text("Connected")
+              .scaledFont(size: 10, weight: .semibold)
+              .foregroundColor(OmiColors.success)
+          }
+        }
+
+        Text(subtitle)
+          .scaledFont(size: 12)
+          .foregroundColor(OmiColors.textTertiary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+
+      Spacer()
+
+      if isConnected {
+        Button("Disconnect", action: disconnectAction)
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+      }
+
+      Button(connectTitle, action: connectAction)
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .disabled(comingSoon)
+    }
+  }
+
+  private func connectorBrand(for provider: ExternalAIAccountProvider) -> ConnectorBrand {
+    switch provider {
+    case .claude: return .claude
+    case .chatgpt: return .chatgpt
+    case .grok: return .x
+    }
+  }
+
+  private func connectClaudeAccount() {
+    chatBridgeMode = ChatProvider.BridgeMode.userClaude.rawValue
+    Task {
+      await chatProvider?.switchBridgeMode(to: .userClaude)
+      chatProvider?.checkClaudeConnectionStatus()
+      chatProvider?.startClaudeAuth()
+    }
+  }
+
+  // MARK: - OpenRouter key (standalone, independent of BYOK)
+
+  func openRouterKeyCard(settingId: String) -> some View {
+    settingsCard(settingId: settingId) {
+      VStack(alignment: .leading, spacing: 10) {
+        HStack(spacing: 10) {
+          Image(systemName: "network")
+            .scaledFont(size: 16)
+            .foregroundColor(OmiColors.textTertiary)
+
+          VStack(alignment: .leading, spacing: 3) {
+            Text("OpenRouter API Key")
+              .scaledFont(size: 14, weight: .medium)
+              .foregroundColor(OmiColors.textPrimary)
+            Text(
+              "Routes local agent and OpenRouter-backed model calls through your key. Separate from the four-provider BYOK free plan."
+            )
+            .scaledFont(size: 12)
+            .foregroundColor(OmiColors.textTertiary)
+            .fixedSize(horizontal: false, vertical: true)
+          }
+
+          Spacer()
+
+          if !devOpenRouterKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Text("Configured")
+              .scaledFont(size: 11, weight: .semibold)
+              .foregroundColor(OmiColors.success)
+          }
+        }
+
+        HStack(spacing: 8) {
+          SecureField("sk-or-v1-...", text: $devOpenRouterKey)
+            .textFieldStyle(.roundedBorder)
+            .scaledFont(size: 13)
+            .onChange(of: devOpenRouterKey) { _, newValue in
+              applyOpenRouterKeyToEnvironment(newValue)
+            }
+
+          if !devOpenRouterKey.isEmpty {
+            Button("Clear") {
+              devOpenRouterKey = ""
+              applyOpenRouterKeyToEnvironment("")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+          }
+        }
+      }
+    }
+  }
+
+  func applyOpenRouterKeyToEnvironment(_ value: String) {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty {
+      unsetenv("OPENROUTER_API_KEY")
+      unsetenv("OMI_OPENROUTER_API_KEY")
+    } else {
+      setenv("OPENROUTER_API_KEY", trimmed, 1)
+      setenv("OMI_OPENROUTER_API_KEY", trimmed, 1)
     }
   }
 

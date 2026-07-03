@@ -48,9 +48,42 @@ enum BYOKProvider: String, CaseIterable {
         }
     }
 }
+
+/// Consumer AI accounts a user can connect for desktop chat, surfaced in the
+/// "Member Accounts" settings card. Claude is wired to the real ACP/Claude Code
+/// bridge (`ChatProvider.BridgeMode.userClaude`); ChatGPT and Grok have no
+/// desktop harness yet and are shown as honest "coming soon" placeholders.
+enum ExternalAIAccountProvider: String, CaseIterable, Identifiable {
+    case claude
+    case chatgpt
+    case grok
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .claude: return "Claude"
+        case .chatgpt: return "ChatGPT"
+        case .grok: return "Grok"
+        }
+    }
+
+    var accountURL: URL {
+        switch self {
+        case .claude: return URL(string: "https://claude.ai")!
+        case .chatgpt: return URL(string: "https://chatgpt.com")!
+        case .grok: return URL(string: "https://grok.com")!
+        }
+    }
+}
+
 @MainActor
 final class APIKeyService: ObservableObject {
     static let shared = APIKeyService()
+
+    /// Standalone OpenRouter key storage. Independent of the four-provider BYOK
+    /// gate — configuring it must NOT flip the user onto the free BYOK plan.
+    nonisolated static let openRouterStorageKey = "dev_openrouter_api_key"
 
     // Backend-provided keys (in-memory only, never persisted to disk)
     @Published private(set) var geminiApiKey: String?
@@ -173,6 +206,15 @@ final class APIKeyService: ObservableObject {
     nonisolated static var currentGeminiKey: String? {
         nonEmptyStatic(UserDefaults.standard.string(forKey: "dev_gemini_api_key"))
             ?? (getenv("GEMINI_API_KEY").flatMap { String(validatingUTF8: $0) })
+    }
+
+    /// The user's OpenRouter key, if configured. Read from UserDefaults (set via
+    /// the settings field) or the process environment. Kept separate from BYOK so
+    /// it can be forwarded to the local agent subprocess without touching the
+    /// four-provider free-plan gate.
+    nonisolated static var currentOpenRouterKey: String? {
+        nonEmptyStatic(UserDefaults.standard.string(forKey: openRouterStorageKey))
+            ?? (getenv("OPENROUTER_API_KEY").flatMap { String(validatingUTF8: $0) })
     }
 
     /// True when the app has enough configuration to start transcription and screen analysis.

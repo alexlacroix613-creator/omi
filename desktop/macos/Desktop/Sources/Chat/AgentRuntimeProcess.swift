@@ -477,6 +477,13 @@ actor AgentRuntimeProcess {
       log("AgentRuntimeProcess: pi-mono BYOK active, forwarding \(BYOKProvider.allCases.count) user keys")
     }
 
+    // Standalone OpenRouter key — independent of BYOK. Forwarded to the agent
+    // subprocess so OpenRouter-backed model calls route through the user's key.
+    if let openRouterKey = APIKeyService.currentOpenRouterKey {
+      env["OPENROUTER_API_KEY"] = openRouterKey
+      env["OMI_OPENROUTER_API_KEY"] = openRouterKey
+    }
+
     let authService = await MainActor.run { AuthService.shared }
     if let token = try? await authService.getIdToken(), !token.isEmpty {
       env["OMI_AUTH_TOKEN"] = token

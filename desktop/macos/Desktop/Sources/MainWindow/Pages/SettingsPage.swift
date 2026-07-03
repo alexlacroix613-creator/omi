@@ -396,6 +396,8 @@ struct SettingsContentView: View {
   @AppStorage("dev_anthropic_api_key") var devAnthropicKey: String = ""
   @AppStorage("dev_openai_api_key") var devOpenAIKey: String = ""
   @AppStorage("dev_deepgram_api_key") var devDeepgramKey: String = ""
+  // Standalone OpenRouter key — NOT part of the four-provider BYOK gate.
+  @AppStorage("dev_openrouter_api_key") var devOpenRouterKey: String = ""
   @State var byokKeyStatuses: [BYOKProvider: BYOKValidator.Status] = [:]
   @State var byokActivationError: String?
 

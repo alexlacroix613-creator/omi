@@ -19,6 +19,7 @@ final class BYOKPaywallTests: XCTestCase {
         for p in BYOKProvider.allCases {
             UserDefaults.standard.removeObject(forKey: p.storageKey)
         }
+        UserDefaults.standard.removeObject(forKey: APIKeyService.openRouterStorageKey)
     }
 
     override func tearDown() {
@@ -26,6 +27,24 @@ final class BYOKPaywallTests: XCTestCase {
         clearAllBYOKKeys()
         UserDefaults.standard.removeObject(forKey: paywallKey)
         super.tearDown()
+    }
+
+    /// The standalone OpenRouter key must stay outside the four-provider BYOK
+    /// gate: configuring it alone must not flip the user onto the free plan,
+    /// and removing it must not disturb an otherwise-complete BYOK set.
+    func testOpenRouterKeyDoesNotParticipateInByokGate() {
+        clearAllBYOKKeys()
+
+        UserDefaults.standard.set("sk-or-v1-test", forKey: APIKeyService.openRouterStorageKey)
+
+        XCTAssertEqual(APIKeyService.currentOpenRouterKey, "sk-or-v1-test")
+        XCTAssertFalse(APIKeyService.isByokActive, "OpenRouter alone must not activate four-provider BYOK")
+
+        setAllBYOKKeys()
+        UserDefaults.standard.removeObject(forKey: APIKeyService.openRouterStorageKey)
+
+        XCTAssertNil(APIKeyService.currentOpenRouterKey)
+        XCTAssertTrue(APIKeyService.isByokActive, "OpenRouter must stay independent from four-provider BYOK")
     }
 
     func testByokActiveRequiresAllFourKeys() {
