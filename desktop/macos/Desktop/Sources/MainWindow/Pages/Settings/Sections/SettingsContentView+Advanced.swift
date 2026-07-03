@@ -911,6 +911,15 @@ extension SettingsContentView {
           }
         }
 
+        OpenRouterConnectButton(onConnected: { key in
+          devOpenRouterKey = key
+          applyOpenRouterKeyToEnvironment(key)
+        })
+
+        Text("or paste a key manually")
+          .scaledFont(size: 11)
+          .foregroundColor(OmiColors.textTertiary)
+
         HStack(spacing: 8) {
           SecureField("sk-or-v1-...", text: $devOpenRouterKey)
             .textFieldStyle(.roundedBorder)
