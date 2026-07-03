@@ -3860,6 +3860,8 @@ struct TaskRow: View {
     @State private var isCopyingLink = false
     @State private var showShareCopiedToast = false
     @State private var shareToastDismissTask: Task<Void, Never>?
+    @State private var showExecutedToast = false
+    @State private var executeToastDismissTask: Task<Void, Never>?
 
     // Inline editing state
     @State private var editText = ""
@@ -3943,6 +3945,11 @@ struct TaskRow: View {
         .overlay(alignment: .topTrailing) {
             if showShareCopiedToast {
                 shareCopiedToast
+                    .padding(.top, -10)
+                    .padding(.trailing, 12)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            } else if showExecutedToast {
+                executedToast
                     .padding(.top, -10)
                     .padding(.trailing, 12)
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -4378,6 +4385,7 @@ struct TaskRow: View {
                                 ? ModelQoS.Claude.defaultSelection
                                 : ShortcutSettings.shared.selectedModel
                             AgentPillsManager.shared.spawn(query: task.description, model: model)
+                            showExecutedFeedback()
                         } label: {
                             HStack(spacing: 3) {
                                 Image(systemName: "sparkles")
@@ -4597,6 +4605,59 @@ struct TaskRow: View {
             Image(systemName: "checkmark")
                 .scaledFont(size: 10, weight: .bold)
             Text("Sharing link copied")
+                .scaledFont(size: 11, weight: .semibold)
+        }
+        .foregroundColor(OmiColors.textPrimary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            Capsule()
+                .fill(OmiColors.backgroundSecondary)
+        )
+        .overlay(
+            Capsule()
+                .stroke(OmiColors.border.opacity(0.8), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.18), radius: 10, x: 0, y: 6)
+        .allowsHitTesting(false)
+    }
+
+    // MARK: - Execute Feedback
+
+    /// Tapping Execute used to be a dead click: the pill only ever appeared in
+    /// the floating bar, which can be hidden or off-screen, so there was no
+    /// in-page acknowledgement at all. Mirrors `showShareCopiedFeedback()`'s
+    /// toast timing, plus surfaces the floating bar the same way
+    /// `ChatProvider` already does for background browser tools.
+    private func showExecutedFeedback() {
+        // Reuse the existing "temporarily show without changing the user's
+        // pinned/hidden preference" mechanism so a spawned pill is actually
+        // visible somewhere instead of silently running behind a hidden bar.
+        if !FloatingControlBarManager.shared.isVisible {
+            FloatingControlBarManager.shared.showTemporarily()
+        }
+
+        executeToastDismissTask?.cancel()
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
+            showExecutedToast = true
+        }
+
+        executeToastDismissTask = Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    showExecutedToast = false
+                }
+            }
+        }
+    }
+
+    private var executedToast: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "sparkles")
+                .scaledFont(size: 10, weight: .bold)
+            Text("Sent to agents")
                 .scaledFont(size: 11, weight: .semibold)
         }
         .foregroundColor(OmiColors.textPrimary)

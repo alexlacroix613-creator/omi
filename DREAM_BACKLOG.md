@@ -24,15 +24,24 @@ Legend: Value 5 = biggest win. Effort S = <1 file/hour, M = a few files, L = mul
   escalating to "Still working — quiet for 2m" → "No update for 2m — may have
   stalled". Tests: `Tests/AgentStallNarrationTests.swift`.
 
-### 2. Execute button gives zero in-page feedback (Tasks page)
+### 2. [DONE this iteration] Execute button gives zero in-page feedback (Tasks page)
 - **Value 5 · Effort S · Risk Low** — complaint (b), the other headline pain.
-- `MainWindow/Pages/TasksPage.swift:~4376` Execute button calls
-  `AgentPillsManager.shared.spawn(query:model:)` and returns nothing to the row.
+- Was: `MainWindow/Pages/TasksPage.swift:~4376` Execute button called
+  `AgentPillsManager.shared.spawn(query:model:)` and returned nothing to the row.
   The pill spawns in the floating bar, which may be off-screen/hidden, so from the
-  Tasks page the click looks dead.
-- Fix: on tap, show a transient in-row confirmation ("Sent to agents ↗" for ~2s)
-  and/or briefly surface/flash the floating bar. Reuse the pill's `id` to offer an
-  "Open" affordance. No new execution path.
+  Tasks page the click looked dead.
+- Built: `TaskRow.showExecutedFeedback()` shows a transient "Sent to agents" toast
+  (same spring-in/ease-out timing as the existing `shareCopiedToast`, ~2s) and
+  reveals the floating bar via `FloatingControlBarManager.shared.showTemporarily()`
+  when it isn't already visible — the same "show without changing the user's
+  pinned/hidden preference" call `ChatProvider` already uses for background
+  browser tools. No new execution path; no pure logic worth a unit test (it's UI
+  toast wiring reusing an existing manager call), so none added.
+- Deferred: an "Open" affordance that jumps straight to the new pill's chat via
+  `state.activeAgentChatPillID` — `FloatingControlBarState.present(_:)` is the
+  hook, but it lives behind `FloatingControlBarManager.shared.window?.state`
+  with no small public wrapper yet. Worth a follow-up item if Alex wants one-tap
+  jump-to-pill instead of just "it's now visible somewhere."
 
 ### 3. Stall narration should also drive a Cancel/still-there prompt in the pill popover
 - **Value 4 · Effort S · Risk Low** — completes item 1 for users who open the pill.
