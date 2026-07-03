@@ -372,6 +372,9 @@ struct SettingsContentView: View {
   @State var showRescanFilesAlert: Bool = false
   @State var showDeleteAccountAlert: Bool = false
 
+  // Cloud VM sync status (item 4, DREAM_BACKLOG) — surfaced in Troubleshooting
+  @ObservedObject var agentVMStatusStore = AgentVMStatusStore.shared
+
   // Gmail Reader states
   @State var gmailEmails: [GmailEmail] = []
   @State var isReadingGmail: Bool = false

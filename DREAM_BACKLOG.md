@@ -66,15 +66,48 @@ Legend: Value 5 = biggest win. Effort S = <1 file/hour, M = a few files, L = mul
   `.padding(.bottom, 12)` only when visible — normal (non-stalled) layout is
   now pixel-identical to before this change.
 
-### 4. Cloud VM Execute path (AgentVMService) is invisible and can silently die
+### 4. [DONE this iteration] Cloud VM Execute path (AgentVMService) is invisible and can silently die
 - **Value 4 · Effort M · Risk Med** — the true "ghosting cloud VM" path.
-- `AgentVMService.swift` (provision → poll → upload DB) is fire-and-forget with only
-  `log(...)`; nothing reaches SwiftUI. `pollUntilReady` gives up after 30×5s with no
-  user signal; provision failure just returns. `getAgentStatus`/`agentStartedAt`
-  (APIClient.swift ~5293) are never surfaced.
-- Fix: add an `@MainActor` observable (`AgentVMStatusStore`) fed by the pipeline
-  (provisioning/queued/ready/failed/timed-out + timestamp), render a small settings
-  card, and mark "stalled" when a run sits >N min. Pure stall helper reusable from item 1.
+- Was: `AgentVMService.swift` (provision → poll → upload DB) is fire-and-forget with
+  only `log(...)`; nothing reaches SwiftUI. `pollUntilReady` gives up after 30×5s with
+  no user signal; provision failure just returns. The `AgentStatusResponse`
+  (`createdAt`/`lastQueryAt`, APIClient.swift ~5297) fields were never surfaced either
+  (the backlog's "`agentStartedAt`" name was stale — that field belongs to
+  `TaskActionItem`, a different agent-execution-tracking struct entirely; no such
+  property exists on the VM status response).
+- Built: `Sources/AgentVMStatusStore.swift` — a pure `AgentVMState` enum
+  (idle/provisioning/polling/uploading/ready/failed(reason)/timedOut) with
+  `isRunning`/`label`, a pure `AgentVMStallLogic.isStalled(state:since:now:)` helper
+  (mirrors `AgentStallNarration`'s "quiet too long" idea but off discrete stage
+  transitions instead of a continuous activity stream — 150s threshold, matching
+  `pollUntilReady`'s own 30×5s give-up point), and an `@MainActor
+  AgentVMStatusStore.shared` `ObservableObject` with `transition(to:)` +
+  `lastTransitionAt`. `AgentVMService` now calls `transition(to:)` at every pipeline
+  stage (`ensureProvisioned`, `runPipeline`, `reuploadDatabase`) — no behavior change
+  to the pipeline itself, purely additive status reporting. Surfaced as a "Cloud
+  Sync" status row (icon + state label + live "since" time via
+  `TimelineView(.periodic)`, amber when stalled, red when failed/timed out) in
+  Settings → Advanced → Troubleshooting (`cloudSyncStatusCard` in
+  `SettingsContentView+Assistants.swift`), mirroring the existing
+  `troubleshootingSubsection` card pattern (Report Issue / Rescan Files). Tests:
+  `Tests/AgentVMStatusStoreTests.swift` (10/10) covering `AgentVMState.isRunning`/
+  `Equatable`, `AgentVMStallLogic` boundary + clock-skew cases, and
+  `AgentVMStatusStore.transition` (incl. same-state no-op, differing-reason
+  `.failed` re-transition).
+- Also closes the secondary "`pollUntilReady` swallows the timeout" item below:
+  both `pollUntilReady` give-up paths (`ensureProvisioned`'s polling branch and
+  `runPipeline`) and the provision-failure / no-IP paths now call
+  `AgentVMStatusStore.markFailed(reason)` / `.markTimedOut()`, which transition the
+  store AND post a one-shot system notification via the existing
+  `NotificationService.shared.sendNotification(deliverSystemBanner: true,
+  respectFrequency: false)` helper — the same pattern already used for the screen-
+  capture-reset functional notification, so no new notification permission path was
+  introduced.
+- Deliberately not tested: `markFailed`/`markTimedOut` themselves (they call into
+  `NotificationService`, which touches system notification permission APIs and the
+  floating-bar window manager — out of scope for a fast unit test and would make the
+  suite flaky/order-dependent on macOS notification state). The pure logic they
+  delegate to (`transition(to:)`) is fully covered instead.
 
 ### 5. Reroute Execute away from the ghosting cloud VM to a reporting agent
 - **Value 5 · Effort L · Risk High** — the real structural fix; too big for one pass.
@@ -120,9 +153,10 @@ Legend: Value 5 = biggest win. Effort S = <1 file/hour, M = a few files, L = mul
 - **`replaceWithAutomationPills` seeds "SLEEP FOR 5" demo content** (`AgentPill.swift:947`)
   — looks like a dogfood/demo harness shipping in prod. Confirm it's test-only or gate it.
   Value 3 · Effort S · Risk Low.
-- **AgentVMService `pollUntilReady` swallows the timeout** (`AgentVMService.swift:115`) —
-  even without full UI (item 4), at least post a one-shot notification on give-up so the
-  DB sync failure isn't silent. Value 2 · Effort S · Risk Low.
+- **[DONE — covered by item 4] AgentVMService `pollUntilReady` swallows the timeout**
+  (`AgentVMService.swift:115`) — now transitions `AgentVMStatusStore` to `.timedOut`
+  and posts a one-shot system notification on every give-up path. Value 2 · Effort S ·
+  Risk Low.
 - **StallThresholds are first-pass guesses** (`StallThresholds.swift:31`, 8s/20s) and
   `AgentStallNarration` (45s/120s) — tune both against real inter-event-gap
   distributions once telemetry exists. Value 2 · Effort S · Risk Low.
@@ -132,7 +166,9 @@ Legend: Value 5 = biggest win. Effort S = <1 file/hour, M = a few files, L = mul
 ## Testing / hardening gaps
 - No UI/snapshot test that the notch agent row actually renders the stall subtitle
   (pure logic is covered; view wiring is not). Value 2 · Effort M · Risk Low.
-- `AgentVMService` has no tests at all (network + Process shell-out). Value 2 · Effort M.
+- `AgentVMService` itself still has no tests (network + Process shell-out) — item 4
+  added coverage for the new `AgentVMStatusStore`/`AgentVMStallLogic` it feeds, but
+  the actor's provision/poll/upload/sync methods remain untested. Value 2 · Effort M.
 
 ## Notes for future iterations
 - The in-app bridge path (AgentPill / ChatProvider / AgentRuntimeStatusStore /

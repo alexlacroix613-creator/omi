@@ -1090,6 +1090,11 @@ extension SettingsContentView {
 
   var troubleshootingSubsection: some View {
     VStack(spacing: 20) {
+      // Cloud Sync status (item 4, DREAM_BACKLOG) — the cloud VM pipeline that
+      // uploads the local database is otherwise fire-and-forget; this makes
+      // its provisioning/polling/uploading/failed/timed-out state visible.
+      cloudSyncStatusCard
+
       // Report Issue
       settingsCard(settingId: "advanced.troubleshooting.reportissue") {
         HStack(spacing: 16) {
@@ -1172,6 +1177,79 @@ extension SettingsContentView {
         )
       }
 
+    }
+  }
+
+  // MARK: - Cloud Sync Status (item 4, DREAM_BACKLOG)
+
+  /// Small status row for the cloud agent VM pipeline (provision → poll →
+  /// upload DB) that `AgentVMService` drives in the background. It previously
+  /// only ever logged; this renders its current stage, "since" time, and
+  /// flags a stalled/timed-out/failed run in the same amber/red language the
+  /// floating-bar pill stall narration uses.
+  var cloudSyncStatusCard: some View {
+    settingsCard(settingId: "advanced.troubleshooting.cloudsync") {
+      TimelineView(.periodic(from: .now, by: 5)) { context in
+        let state = agentVMStatusStore.state
+        let since = agentVMStatusStore.lastTransitionAt
+        let stalled = AgentVMStallLogic.isStalled(state: state, since: since, now: context.date)
+
+        HStack(spacing: 16) {
+          Image(systemName: cloudSyncIcon(for: state))
+            .scaledFont(size: 16)
+            .foregroundColor(cloudSyncColor(for: state, stalled: stalled))
+            .frame(width: 24, height: 24)
+
+          VStack(alignment: .leading, spacing: 4) {
+            Text("Cloud Sync")
+              .scaledFont(size: 16, weight: .semibold)
+              .foregroundColor(OmiColors.textPrimary)
+
+            Text(cloudSyncSubtitle(for: state, since: since, now: context.date, stalled: stalled))
+              .scaledFont(size: 13)
+              .foregroundColor(cloudSyncColor(for: state, stalled: stalled))
+          }
+
+          Spacer()
+        }
+      }
+    }
+  }
+
+  private func cloudSyncIcon(for state: AgentVMState) -> String {
+    switch state {
+    case .idle: return "cloud"
+    case .provisioning, .polling: return "cloud.and.arrow.up"
+    case .uploading: return "arrow.up.circle"
+    case .ready: return "checkmark.icloud"
+    case .failed: return "exclamationmark.icloud"
+    case .timedOut: return "clock.badge.exclamationmark"
+    }
+  }
+
+  private func cloudSyncColor(for state: AgentVMState, stalled: Bool) -> Color {
+    if stalled { return OmiColors.warning }
+    switch state {
+    case .failed, .timedOut: return OmiColors.error
+    case .ready: return OmiColors.success
+    case .idle, .provisioning, .polling, .uploading: return OmiColors.textTertiary
+    }
+  }
+
+  private func cloudSyncSubtitle(
+    for state: AgentVMState, since: Date, now: Date, stalled: Bool
+  ) -> String {
+    let sinceLabel = AgentStallNarration.shortDuration(max(0, now.timeIntervalSince(since)))
+    if stalled {
+      return "\(state.label) — no progress for \(sinceLabel), may have stalled"
+    }
+    switch state {
+    case .idle:
+      return "Not started yet"
+    case .ready:
+      return "Ready · updated \(sinceLabel) ago"
+    default:
+      return "\(state.label) · \(sinceLabel)"
     }
   }
 

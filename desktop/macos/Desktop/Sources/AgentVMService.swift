@@ -26,23 +26,30 @@ actor AgentVMService {
                     log("AgentVMService: VM already ready — vmName=\(status.vmName) ip=\(ip)")
                     // Only upload if the VM doesn't have a database yet
                     if await checkVMNeedsDatabase(vmIP: ip, authToken: status.authToken) {
+                        await AgentVMStatusStore.shared.transition(to: .uploading)
                         await uploadDatabase(vmIP: ip, authToken: status.authToken)
                     } else {
                         log("AgentVMService: VM already has database, skipping upload")
                     }
+                    await AgentVMStatusStore.shared.transition(to: .ready)
                     await startIncrementalSync(vmIP: ip, authToken: status.authToken)
                     return
                 }
                 if let status = status,
                    status.status == "provisioning" || status.status == "stopped" {
                     log("AgentVMService: VM is \(status.status), polling until ready...")
+                    await AgentVMStatusStore.shared.transition(to: .polling)
                     if let result = await pollUntilReady(maxAttempts: 30, intervalSeconds: 5),
                        let ip = result.ip {
                         log("AgentVMService: VM became ready — ip=\(ip)")
                         if await checkVMNeedsDatabase(vmIP: ip, authToken: result.authToken) {
+                            await AgentVMStatusStore.shared.transition(to: .uploading)
                             await uploadDatabase(vmIP: ip, authToken: result.authToken)
                         }
+                        await AgentVMStatusStore.shared.transition(to: .ready)
                         await startIncrementalSync(vmIP: ip, authToken: result.authToken)
+                    } else {
+                        await AgentVMStatusStore.shared.markTimedOut()
                     }
                     return
                 }
@@ -73,12 +80,14 @@ actor AgentVMService {
     private func runPipeline() async {
         // Step 1: Provision (idempotent — returns existing VM if already provisioned)
         log("AgentVMService: Starting provisioning...")
+        await AgentVMStatusStore.shared.transition(to: .provisioning)
         let provisionResult: APIClient.AgentProvisionResponse
         do {
             provisionResult = try await APIClient.shared.provisionAgentVM()
             log("AgentVMService: Provision response — vmName=\(provisionResult.vmName) status=\(provisionResult.status) ip=\(provisionResult.ip ?? "none")")
         } catch {
             log("AgentVMService: Provision failed — \(error.localizedDescription)")
+            await AgentVMStatusStore.shared.markFailed(error.localizedDescription)
             return
         }
 
@@ -88,6 +97,7 @@ actor AgentVMService {
 
         if vmIP == nil || provisionResult.agentStatus == "provisioning" {
             log("AgentVMService: Waiting for VM to be ready...")
+            await AgentVMStatusStore.shared.transition(to: .polling)
             let pollResult = await pollUntilReady(maxAttempts: 30, intervalSeconds: 5)
             if let result = pollResult {
                 vmIP = result.ip
@@ -95,19 +105,23 @@ actor AgentVMService {
                 log("AgentVMService: VM ready — ip=\(vmIP ?? "none")")
             } else {
                 log("AgentVMService: VM did not become ready in time")
+                await AgentVMStatusStore.shared.markTimedOut()
                 return
             }
         }
 
         guard let ip = vmIP else {
             log("AgentVMService: No IP available after provisioning")
+            await AgentVMStatusStore.shared.markFailed("no IP returned after provisioning")
             return
         }
 
         // Step 3: Check if DB exists and upload it
+        await AgentVMStatusStore.shared.transition(to: .uploading)
         await uploadDatabase(vmIP: ip, authToken: authToken)
 
         // Step 4: Start incremental sync
+        await AgentVMStatusStore.shared.transition(to: .ready)
         await startIncrementalSync(vmIP: ip, authToken: authToken)
     }
 
@@ -155,7 +169,9 @@ actor AgentVMService {
     /// Called by AgentSyncService when it detects databaseReady: false on the VM.
     func reuploadDatabase(vmIP: String, authToken: String) async {
         log("AgentVMService: Re-uploading database to VM (triggered by sync failure)")
+        await AgentVMStatusStore.shared.transition(to: .uploading)
         await uploadDatabase(vmIP: vmIP, authToken: authToken)
+        await AgentVMStatusStore.shared.transition(to: .ready)
     }
 
     /// Upload the local omi.db (gzip-compressed) to the VM's /upload endpoint.
