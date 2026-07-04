@@ -1085,6 +1085,36 @@ extension SettingsContentView {
           .labelsHidden()
         }
       }
+
+      // Agent status-update pace — drives AgentStallNarration thresholds.
+      settingsCard(settingId: "advanced.preferences.stallpace") {
+        HStack(spacing: 16) {
+          Image(systemName: "timer")
+            .scaledFont(size: 16)
+            .foregroundColor(OmiColors.textSecondary)
+            .frame(width: 24, height: 24)
+
+          VStack(alignment: .leading, spacing: 4) {
+            Text("Agent Status Updates")
+              .scaledFont(size: 16, weight: .semibold)
+              .foregroundColor(OmiColors.textPrimary)
+
+            Text("How soon a quiet running agent shows \u{201C}still working\u{201D} / \u{201C}may have stalled\u{201D}.")
+              .scaledFont(size: 13)
+              .foregroundColor(OmiColors.textTertiary)
+          }
+
+          Spacer()
+
+          Picker("", selection: $stallThresholdPreset) {
+            ForEach(StallThresholdPreset.allCases, id: \.rawValue) { preset in
+              Text(preset.displayName).tag(preset.rawValue)
+            }
+          }
+          .pickerStyle(.menu)
+          .frame(width: 140)
+        }
+      }
     }
   }
 

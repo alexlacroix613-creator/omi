@@ -157,6 +157,14 @@ extension SettingsContentView {
 
   // MARK: - Privacy Section
 
+  func redactionLevelLabel(_ level: PrivacyRedactionPolicy.Level) -> String {
+    switch level {
+    case .off: return "Off"
+    case .emails: return "Emails"
+    case .aggressive: return "Emails + Phones"
+    }
+  }
+
   var privacySection: some View {
     VStack(spacing: 20) {
       // Data Controls
@@ -184,6 +192,38 @@ extension SettingsContentView {
             isOn: $privateCloudSyncEnabled
           ) { newValue in
             updatePrivateCloudSync(newValue)
+          }
+        }
+      }
+
+      // Redact PII before chat text leaves the Mac
+      settingsCard(settingId: "privacy.redaction") {
+        VStack(alignment: .leading, spacing: 12) {
+          HStack(spacing: 10) {
+            Image(systemName: "eye.slash")
+              .scaledFont(size: 14)
+              .foregroundColor(OmiColors.purplePrimary)
+              .frame(width: 20)
+
+            VStack(alignment: .leading, spacing: 3) {
+              Text("Redact Personal Info")
+                .scaledFont(size: 14, weight: .medium)
+                .foregroundColor(OmiColors.textPrimary)
+              Text("Strip emails and phone numbers from chat messages before they are sent to any AI model.")
+                .scaledFont(size: 12)
+                .foregroundColor(OmiColors.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+
+            Picker("", selection: $privacyRedactionLevel) {
+              ForEach(PrivacyRedactionPolicy.Level.allCases, id: \.rawValue) { level in
+                Text(redactionLevelLabel(level)).tag(level.rawValue)
+              }
+            }
+            .pickerStyle(.menu)
+            .frame(width: 130)
           }
         }
       }

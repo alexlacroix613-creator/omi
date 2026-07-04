@@ -35,10 +35,22 @@ enum AgentStallNarration {
     let text: String
   }
 
+  /// The user's chosen escalation pace. Defaults to `.balanced`, whose
+  /// thresholds are exactly the historical constants (45 / 120), so an
+  /// un-set preset reproduces the old behavior byte-for-byte.
+  ///
+  /// ponytail: reads UserDefaults directly (the @AppStorage("stallThresholdPreset")
+  /// backing store) so the pill's `TimelineView` re-eval picks up a changed
+  /// preset live, with no signature change to `narrate` or its call sites.
+  static var currentPreset: StallThresholdPreset {
+    let raw = UserDefaults.standard.string(forKey: "stallThresholdPreset") ?? ""
+    return StallThresholdPreset(rawValue: raw) ?? .balanced
+  }
+
   /// A gap this long since the last activity update promotes to `.slow`.
-  static let slowAfter: TimeInterval = 45
+  static var slowAfter: TimeInterval { currentPreset.thresholds.slowAfter }
   /// A gap this long since the last activity update promotes to `.stalled`.
-  static let stalledAfter: TimeInterval = 120
+  static var stalledAfter: TimeInterval { currentPreset.thresholds.stalledAfter }
 
   /// Narrate an active pill. Returns `nil` for finished pills (`isActive ==
   /// false`) so callers keep their normal terminal label.

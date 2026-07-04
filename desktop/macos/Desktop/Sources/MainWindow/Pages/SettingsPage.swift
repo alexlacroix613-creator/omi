@@ -415,6 +415,13 @@ struct SettingsContentView: View {
   @AppStorage("dev_deepgram_api_key") var devDeepgramKey: String = ""
   // Standalone OpenRouter key — NOT part of the four-provider BYOK gate.
   @AppStorage("dev_openrouter_api_key") var devOpenRouterKey: String = ""
+  // How fast the running-agent pill escalates a quiet stream to "still working"
+  // / "may have stalled". Read by AgentStallNarration.currentPreset; default
+  // "balanced" reproduces the historical 45s/120s thresholds exactly.
+  @AppStorage("stallThresholdPreset") var stallThresholdPreset: String = StallThresholdPreset.balanced.rawValue
+  // Opt-in PII redaction applied to chat text before it leaves the Mac. Read by
+  // ChatProvider.sendMessage; default "off" is the identity function (no change).
+  @AppStorage("privacyRedactionLevel") var privacyRedactionLevel: String = PrivacyRedactionPolicy.Level.off.rawValue
   // Transcription (STT) routing: false = on-device Parakeet (Apple Silicon default),
   // true = cloud Deepgram. Read by AppState+Transcription. Surfaced in the Voice
   // Transcription card so the user can pick on-device / Omi cloud / their own key.

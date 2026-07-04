@@ -3229,8 +3229,16 @@ BROWSER TABS: when you use the browser (Playwright), on your FIRST browser actio
         resume: String? = nil,
         imageData: Data? = nil
     ) async -> String? {
-        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedText.isEmpty else { return nil }
+        let rawTrimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawTrimmed.isEmpty else { return nil }
+        // Opt-in PII scrub at the single outbound chokepoint: this covers typed,
+        // voice, and follow-up sends (all of which route through sendMessage).
+        // ponytail: default .off is the identity function, so an un-set toggle
+        // is a byte-for-byte no-op — no behavior change unless the user opts in.
+        let redactionLevel = PrivacyRedactionPolicy.Level(
+            rawValue: UserDefaults.standard.string(forKey: "privacyRedactionLevel") ?? ""
+        ) ?? .off
+        let trimmedText = PrivacyRedactionPolicy.redact(rawTrimmed, level: redactionLevel)
 
         // Guard against concurrent sendMessage calls.
         // The bridge uses a single message continuation, so concurrent queries

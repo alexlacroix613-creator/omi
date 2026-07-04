@@ -134,6 +134,8 @@ extension SettingsContentView {
 
       aiAccountsCard
 
+      providerHealthCard
+
       openRouterKeyCard(settingId: "aichat.openrouter")
 
       settingsCard(settingId: "aichat.provider") {
@@ -809,6 +811,85 @@ extension SettingsContentView {
           connectAction: {},
           disconnectAction: {}
         )
+      }
+    }
+    .onAppear {
+      chatProvider?.checkClaudeConnectionStatus()
+      chatProvider?.checkChatGPTConnectionStatus()
+    }
+  }
+
+  /// Read-only health strip: "N of 4 connected" plus the cheapest capable
+  /// model we'd reach for right now and why. Pure display — reads live auth /
+  /// key state, never probes the network. Live re-routing of real traffic
+  /// through `CostAwareModelRouter` is a separate, gated follow-up.
+  var providerHealthCard: some View {
+    let claudeConnected = chatProvider?.isClaudeConnected == true
+    let chatGPTConnected = chatProvider?.isChatGPTConnected == true
+    let openRouterPresent = !devOpenRouterKey.isEmpty
+    let health = ProviderHealthModel.build(
+      claude: claudeConnected,
+      chatGPT: chatGPTConnected,
+      openRouter: openRouterPresent,
+      gemini: !devGeminiKey.isEmpty
+    )
+    let route = CostAwareModelRouter.route(
+      workload: .balanced,
+      availability: CostAwareModelRouter.Availability(
+        claudeConnected: claudeConnected,
+        chatGPTConnected: chatGPTConnected,
+        openRouterKeyPresent: openRouterPresent
+      )
+    )
+    return settingsCard(settingId: "aichat.providerhealth") {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack(spacing: 10) {
+          Image(systemName: "checkmark.shield")
+            .scaledFont(size: 16)
+            .foregroundColor(OmiColors.textTertiary)
+          Text("Provider Health")
+            .scaledFont(size: 15, weight: .semibold)
+            .foregroundColor(OmiColors.textPrimary)
+          Spacer()
+          Text(health.summary)
+            .scaledFont(size: 12, weight: .semibold)
+            .foregroundColor(health.allConnected ? OmiColors.success : OmiColors.textTertiary)
+        }
+
+        Divider()
+
+        ForEach(health.providers, id: \.name) { provider in
+          HStack(spacing: 8) {
+            Circle()
+              .fill(provider.status == .connected ? OmiColors.success : OmiColors.textTertiary.opacity(0.4))
+              .frame(width: 7, height: 7)
+            Text(provider.name)
+              .scaledFont(size: 13)
+              .foregroundColor(OmiColors.textPrimary)
+            Spacer()
+            Text(provider.status == .connected ? "Connected" : "Needs setup")
+              .scaledFont(size: 11, weight: .medium)
+              .foregroundColor(provider.status == .connected ? OmiColors.success : OmiColors.textTertiary)
+          }
+        }
+
+        Divider()
+
+        HStack(alignment: .top, spacing: 8) {
+          Image(systemName: "bolt.badge.automatic")
+            .scaledFont(size: 12)
+            .foregroundColor(OmiColors.textTertiary)
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Cheapest capable model right now: \(route.providerLabel)")
+              .scaledFont(size: 12, weight: .medium)
+              .foregroundColor(OmiColors.textPrimary)
+            Text(route.reason)
+              .scaledFont(size: 11)
+              .foregroundColor(OmiColors.textTertiary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+          Spacer()
+        }
       }
     }
     .onAppear {
