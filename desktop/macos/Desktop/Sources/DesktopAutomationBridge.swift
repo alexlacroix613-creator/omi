@@ -15,7 +15,14 @@ enum DesktopAutomationLaunchOptions {
     }
     // Auto-enable on any non-production bundle (Omi Dev + every `omi-*` named test
     // bundle) so agents can drive the app without remembering a launch flag. The
-    // listener only binds to 127.0.0.1 and is never enabled on the production bundle.
+    // listener only binds to 127.0.0.1 (never a network-reachable interface).
+    // Honest note (this comment used to claim it's "never enabled on the
+    // production bundle" — that was false as written below): the explicit
+    // flag/env var opt-ins are NOT restricted to non-production bundles, so a
+    // production-bundle launch with `--automation-bridge` or
+    // `OMI_ENABLE_LOCAL_AUTOMATION=1` set also opens this listener. That's a
+    // deliberate escape hatch for scripted QA against Release-configuration
+    // production-bundle builds — an ordinary user launch never sets either.
     return CommandLine.arguments.contains(enableFlag)
       || ProcessInfo.processInfo.environment["OMI_ENABLE_LOCAL_AUTOMATION"] == "1"
       || AppBuild.isNonProduction

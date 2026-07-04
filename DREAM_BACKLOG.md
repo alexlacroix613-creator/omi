@@ -467,12 +467,54 @@ Legend: Value 5 = biggest win. Effort S = <1 file/hour, M = a few files, L = mul
 - **claude.ai web blocked by OMI OAuth** — documented limitation; the claude.ai web
   bridge is blocked by OMI's OAuth. Needs a native provider-auth path (this branch's
   theme). Value 3 · Effort L · Risk Med.
-- **Pill `describeActivity` fallback is bare "Working…"** (`AgentPill.swift:1144`) —
-  now partly covered by item 1's narration, but the base string could name the tool in
-  flight when known. Value 2 · Effort S · Risk Low.
-- **`replaceWithAutomationPills` seeds "SLEEP FOR 5" demo content** (`AgentPill.swift:947`)
-  — looks like a dogfood/demo harness shipping in prod. Confirm it's test-only or gate it.
-  Value 3 · Effort S · Risk Low.
+- **[DONE this iteration] Pill `describeActivity` fallback is bare "Working…"**
+  (`AgentPill.swift:~1144`) — was: once no tool call and no finished text exist yet
+  in a message, the fallback was a static ellipsis even when the agent's own
+  `.thinking` block already had real reasoning text sitting right there, discarded.
+  Built: `describeActivity` now captures the most-recent non-empty `.thinking` block's
+  text while scanning newest-first, and returns it (truncated to 110 chars, same limit
+  as the other branches) if no tool call or finished text ever turns up — a completed
+  tool call or finished text still always wins over it (unchanged priority order).
+  Made the function `nonisolated static` (was `private`, `@MainActor`-isolated via the
+  class) so `AgentPillDescribeActivityTests` can call it synchronously with synthetic
+  `ChatMessage`s — same testability pattern this file already uses for
+  `providerDirective`/`floatingAgentHandoff`. Tests: new
+  `Tests/AgentPillDescribeActivityTests.swift` (15/15) — regression coverage for every
+  existing branch (tool call + summary, most-recent-tool-wins, finished text, streaming
+  text skipped/falls back to an earlier tool, empty message) plus the new thinking
+  fallback (most-recent-wins, 110-char truncation, empty/whitespace-only thinking
+  doesn't suppress "Working…", tool call and finished text still win over an earlier
+  thinking block, discoveryCard still skipped and doesn't block the fallback).
+  Regression: `AgentPillLifecycleTests` (48/48), `PiMonoWiringTests` (24/24),
+  `AgentVMCallerInvariantTests` (2/2) — all green.
+- **[DONE this iteration — audited, no logic change] `replaceWithAutomationPills`
+  seeds "SLEEP FOR 5" demo content** (`AgentPill.swift:~970`, was line 947) — traced
+  every caller: `replaceWithAutomationPills` ← `FloatingControlBarWindow
+  .seedSubagentsForAutomation` ← `DesktopAutomationBridge.swift:614`, the ONLY call
+  site anywhere in `Sources`. `DesktopAutomationBridge` is a loopback-only
+  (127.0.0.1) HTTP listener gated by `DesktopAutomationLaunchOptions.isEnabled`; it
+  is never wired to any menu item, button, or other UI affordance — there is no path
+  from normal app usage to this function. Verdict: **not reachable via any UI in any
+  build**, but it is reachable over localhost in more builds than the code's own
+  comment claimed — the pre-existing comment said the bridge "is never enabled on the
+  production bundle," which was false as written: `isEnabled` also returns true for
+  the *production* bundle if launched with `--automation-bridge` or
+  `OMI_ENABLE_LOCAL_AUTOMATION=1` (auto-enable is what's restricted to
+  non-production bundles; the explicit flag/env-var opt-ins are not bundle-gated at
+  all). No ordinary user launch sets either, so this is a deliberate scripted-QA
+  escape hatch, not a shipped-content bug — left the mechanism as-is (changing it
+  would touch the team's QA harness for Release-configuration builds, well outside
+  a Value-3/Effort-S/Risk-Low audit) and fixed the misleading comment instead. Also
+  added a doc comment directly on `replaceWithAutomationPills` recording the
+  reachability chain and pointing at the corrected comment, so the next person
+  auditing this doesn't have to re-trace it. No `#if DEBUG` gate added — it would be
+  the wrong gate for this codebase's convention (runtime bundle-id/flag checks via
+  `AppBuild.isNonProduction`, not compile-time DEBUG, specifically so QA can drive
+  Release-configuration non-production-bundle builds) and the function is already
+  unreachable without deliberately enabling the bridge. Files touched:
+  `Sources/DesktopAutomationBridge.swift` (comment only), `Sources/FloatingControlBar/
+  AgentPill.swift` (doc comment only). No tests added for this half — no logic
+  changed, matches iteration 6's "clean audit, no code change" precedent.
 - **[DONE — covered by item 4] AgentVMService `pollUntilReady` swallows the timeout**
   (`AgentVMService.swift:115`) — now transitions `AgentVMStatusStore` to `.timedOut`
   and posts a one-shot system notification on every give-up path. Value 2 · Effort S ·

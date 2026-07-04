@@ -967,6 +967,15 @@ final class AgentPillsManager: ObservableObject {
         return true
     }
 
+    /// Seeds fake "SLEEP FOR 5" / "Sleep Subagent" pills with canned content —
+    /// a fixture for scripted QA of the pill UI (multi-pill layout, viewed/done
+    /// states), not a real agent run. Reachability audited 2026-07-03: the only
+    /// caller is `FloatingControlBarWindow.seedSubagentsForAutomation`, which is
+    /// only reachable through `DesktopAutomationBridge`'s localhost-only (127.0.0.1)
+    /// HTTP listener. That listener is off by default for the real production
+    /// bundle — see the honest note on `DesktopAutomationLaunchOptions.isEnabled`
+    /// (DesktopAutomationBridge.swift) for exactly which flags/bundle types turn
+    /// it on. No menu item, button, or other UI path reaches this function.
     func replaceWithAutomationPills(count requestedCount: Int) -> [AgentPill] {
         let ids = pills.map(\.id)
         for id in ids {
@@ -1141,7 +1150,18 @@ final class AgentPillsManager: ObservableObject {
     /// streaming, skip partial text chunks so the pill does not flicker through
     /// mid-token labels like "O..." or "Open..." before the final response lands.
     /// Tool calls still show immediately because they are atomic activity.
-    private static func describeActivity(for message: ChatMessage) -> String {
+    ///
+    /// Internal + `nonisolated` (not `private`) so `AgentPillDescribeActivityTests`
+    /// can call it synchronously with synthetic `ChatMessage`s — pure function,
+    /// no pill/provider/actor state needed. Matches this file's existing
+    /// pattern for tested pure helpers (`providerDirective`, `floatingAgentHandoff`).
+    nonisolated static func describeActivity(for message: ChatMessage) -> String {
+        // Captured the first time we pass a non-empty `.thinking` block while
+        // scanning newest-first, i.e. the most recent reasoning snippet. Used
+        // only if no tool call or finished text ever turns up — better than a
+        // bare "Working…" when we already know what the agent is reasoning
+        // about, even before it has acted or said anything out loud.
+        var mostRecentThinking: String?
         for block in message.contentBlocks.reversed() {
             switch block {
             case .toolCall(_, let name, _, _, let input, _):
@@ -1156,13 +1176,24 @@ final class AgentPillsManager: ObservableObject {
                 if !trimmed.isEmpty {
                     return String(trimmed.prefix(110))
                 }
-            case .thinking, .discoveryCard:
+            case .thinking(_, let text):
+                if mostRecentThinking == nil {
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        mostRecentThinking = String(trimmed.prefix(110))
+                    }
+                }
+                continue
+            case .discoveryCard:
                 continue
             }
         }
         let trimmedFallback = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !message.isStreaming, !trimmedFallback.isEmpty {
             return String(trimmedFallback.prefix(110))
+        }
+        if let mostRecentThinking {
+            return mostRecentThinking
         }
         return "Working…"
     }
