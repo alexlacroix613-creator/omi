@@ -532,6 +532,83 @@ Legend: Value 5 = biggest win. Effort S = <1 file/hour, M = a few files, L = mul
   added coverage for the new `AgentVMStatusStore`/`AgentVMStallLogic` it feeds, but
   the actor's provision/poll/upload/sync methods remain untested. Value 2 · Effort M.
 
+---
+
+## Iteration shipped 2026-07-05 (branch `feat/native-provider-auth-v0.12.0`)
+
+Three features built, tested, committed, pushed, and installed as incremental
+siempre builds (siempre4 → siempre7 / build 12002 → 12006). Current installed
+version: **siempre7 / 12006**.
+
+### 9. [DONE this iteration] Screen capture self-heal — stop clobbering `screenAnalysisEnabled`
+- **Value 5 · Effort M · Risk Med** — screen capture was breaking on every re-sign.
+- Was: `ProactiveAssistantsPlugin` clobbered `screenAnalysisEnabled = false` at six
+  call sites whenever `CGPreflightScreenCaptureAccess()` returned false transiently
+  on launch (the OS returns false before the first window gains focus). One TCC
+  reset and the feature was dead until manually re-armed.
+- Built (commit `033a1cebf`, siempre4 / 12003):
+  - Extracted `permissionNotGrantedError` as a static constant (was a string
+    literal duplicated across 4 call sites — fragile).
+  - Changed 4 call sites to NOT clobber `screenAnalysisEnabled` on transient
+    preflight failures — only the user-intent toggle path flips it now.
+  - Added one-shot self-heal paths gated behind `screenAnalysisSelfHeal_v3` flag —
+    fires once per install to recover from a stale TCC grant without fighting
+    user intent.
+  - Fixed `RewindPage` notification-observer clobber on the same flag.
+  - Tests: `Tests/ScreenCaptureSelfHealTests.swift` (7/7). Regression: 51 suites, 0 failures.
+- Verified live: TCC grant landed, `screenAnalysisEnabled = 1`, `Capture timer set to 9.0s`,
+  `Screenshot captured 3024x1964` — frames flowing.
+- **Recurring breakage root cause (honest):** every ad-hoc re-sign changes the cdhash,
+  making the prior TCC grant stale. macOS won't write a new grant while a
+  `/Volumes/omi/omi.app` ghost lingers in Launch Services (leftover DMG entry).
+  Mitigation: `~/Desktop/DROPBOX/fix-omi-screen-capture.sh` — one-command fix that
+  resets TCC, re-registers with Launch Services, clears the self-heal migration flag,
+  re-arms `screenAnalysisEnabled`, and relaunches. **Permanent fix:** a stable Apple
+  Developer certificate so the signature stops churning ($99/yr), OR stop ad-hoc
+  re-signing for every change.
+
+### 10. [DONE this iteration] Live cost-aware model router — re-route real traffic to cheapest capable provider
+- **Value 4 · Effort M · Risk Med** — Alex pays for multiple providers; the app
+  should use the cheapest one that can handle the workload.
+- Built (commit `f52134631`, siempre5 / 12004):
+  - `Sources/FloatingControlBar/CostAwareModelRouter.swift` — `Route` enum,
+    `Workload` enum (`.light` / `.balanced` / `.heavy`), `Availability` struct,
+    `route(workload:availability:)` → cheapest capable route, `bridgeMode(for:)` →
+    `ChatProvider.BridgeMode` mapping.
+  - `ChatProvider.applyCostAwareRouting(workload:)` (line 947) — guards on the
+    toggle (`costAwareRoutingEnabled`), checks `!isSending && !modeSwitchInProgress`,
+    routes, and calls `switchBridgeMode(to:)` if the target differs from the current.
+  - Called at `ChatProvider.sendMessage()` (line 3356) before every non-follow-up
+    send — follow-ups keep the original provider.
+  - Settings toggle "Auto-route to cheapest" in Advanced → AI Setup, opt-in
+    (`shortcut_costAwareRoutingEnabled`).
+  - Tests: `Tests/CostAwareModelRouterTests.swift` (13/13).
+- Verified live: code path traced end-to-end, binary strings present, opt-in toggle
+  ready. Won't fire until Alex toggles it on.
+
+### 11. [DONE this iteration] Agent voice announcements — speak results aloud when agents finish
+- **Value 4 · Effort S · Risk Low** — Alex wants audible feedback when an agent
+  completes a task so he doesn't have to keep checking the screen.
+- Built (commit `cc4be3408`, siempre6 / 12005):
+  - `AgentPill.complete()` calls `speakOneShot(spokenSummary(...))` when
+    `ShortcutSettings.agentVoiceAnnouncementsEnabled` is true (defaults to true).
+  - `spokenSummary(from:)` — `nonisolated static` helper on `AgentPillsManager`
+    (pure function, no actor state). Strips markdown headers (`(?m)^#\\s+`),
+    bullets (`(?m)^[-*]\\s+`), code fences, and collapses whitespace to produce a
+    clean spoken line. Uses `(?m)` inline flag for multiline matching (not
+    `.anchorsMatchLines` — fragile across Swift versions).
+  - `ShortcutSettings.agentVoiceAnnouncementsEnabled` — new setting, defaults to
+    true (opt-out).
+  - Tests: `Tests/AgentVoiceAnnouncementTests.swift` (10/10) — regex cleanup edge
+    cases, spoken summary shape, enable/disable flag.
+- Diagnostic log lines added (commit `d5443665b`, siempre7 / 12006) at both
+  `AgentPill.complete()` and `FloatingBarVoicePlaybackService.speakOneShot()` so
+  we can verify the TTS fires end-to-end. Verified in-binary; will fire on the
+  next agent completion.
+- **Next step (not yet built):** Alex wants the spoken summary structured as
+  "question, answer, next steps and follow up" instead of the raw result. This is
+  item 12 below.
+
 ## Notes for future iterations
 - The in-app bridge path (AgentPill / ChatProvider / AgentRuntimeStatusStore /
   StallDetector) is mature and well-tested — build ON it, don't rebuild it.
