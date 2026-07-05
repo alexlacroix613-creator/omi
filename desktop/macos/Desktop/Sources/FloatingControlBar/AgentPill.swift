@@ -1244,6 +1244,15 @@ final class AgentPillsManager: ObservableObject {
                 surface: .floatingPill(pillId: pill.id),
                 statusText: trimmedFinalText
             )
+            // Speak the agent's result aloud so Alex doesn't have to
+            // physically check the floating bar. Gated behind a setting
+            // (default true — this is the core "hey, here's your answer"
+            // feedback loop). Truncates to ~500 chars so a long analysis
+            // doesn't become a 2-minute monologue.
+            if ShortcutSettings.shared.agentVoiceAnnouncementsEnabled {
+                let spoken = Self.spokenSummary(from: trimmedFinalText)
+                FloatingBarVoicePlaybackService.shared.speakOneShot(spoken)
+            }
         } else {
             pill.status = .failed("Agent ended before reporting a final result")
             pill.completedAt = Date()
@@ -1275,6 +1284,43 @@ final class AgentPillsManager: ObservableObject {
             pill.conversationMessages.append(failureMessage)
         }
         pill.aiMessage = failureMessage
+    }
+
+    /// Turn an agent's final text into a spoken summary for TTS.
+    /// Strips markdown formatting, truncates to ~500 chars so a long analysis
+    /// doesn't become a 2-minute monologue, and adds a brief prefix so the
+    /// user knows an agent just finished.
+    nonisolated static func spokenSummary(from text: String) -> String {
+        // Strip common markdown: headers, bold, italic, code blocks, links
+        var cleaned = text
+        // Code blocks → "code block"
+        cleaned = cleaned.replacingOccurrences(of: "```[\\s\\S]*?```", with: " [code block] ", options: .regularExpression)
+        // Inline code
+        cleaned = cleaned.replacingOccurrences(of: "`[^`]+`", with: " ", options: .regularExpression)
+        // Headers (inline (?m) makes ^ match at each line start)
+        cleaned = cleaned.replacingOccurrences(of: "(?m)^#{1,6}\\s+", with: "", options: .regularExpression)
+        // Bold/italic markers
+        cleaned = cleaned.replacingOccurrences(of: "\\*{1,3}", with: "", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: "_{1,3}", with: "", options: .regularExpression)
+        // Links [text](url) → text
+        cleaned = cleaned.replacingOccurrences(of: "\\[([^]]+)\\]\\([^)]+\\)", with: "$1", options: .regularExpression)
+        // Bullet/list markers (inline (?m) makes ^ match at each line start)
+        cleaned = cleaned.replacingOccurrences(of: "(?m)^[\\-•*]\\s+", with: "", options: .regularExpression)
+        // Collapse whitespace
+        cleaned = cleaned.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Truncate to ~500 chars at a word boundary
+        let limit = 500
+        if cleaned.count > limit {
+            let prefix = cleaned.prefix(limit)
+            if let lastSpace = prefix.lastIndex(of: " ") {
+                cleaned = String(cleaned[..<lastSpace]) + "…"
+            } else {
+                cleaned = String(prefix) + "…"
+            }
+        }
+        return cleaned
     }
 
     private static func apply(projection: AgentRunProjection, to pill: AgentPill) {

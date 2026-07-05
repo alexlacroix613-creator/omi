@@ -367,6 +367,19 @@ class ShortcutSettings: ObservableObject {
         didSet { UserDefaults.standard.set(draggableBarEnabled, forKey: "shortcut_draggableBarEnabled") }
     }
 
+    /// When true, agent pills speak their result aloud when they finish.
+    /// Default true — this is the core "hey, here's your answer" feedback loop
+    /// so Alex doesn't have to physically check the floating bar after
+    /// provisioning an agent.
+    @Published var agentVoiceAnnouncementsEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(
+                agentVoiceAnnouncementsEnabled,
+                forKey: "shortcut_agentVoiceAnnouncementsEnabled"
+            )
+        }
+    }
+
     /// Push-to-talk replies are always spoken aloud.
     let floatingBarVoiceAnswersEnabled: Bool = true
 
@@ -553,6 +566,8 @@ class ShortcutSettings: ObservableObject {
         self.draggableBarEnabled = UserDefaults.standard.object(forKey: "shortcut_draggableBarEnabled") as? Bool ?? false
         self.floatingBarTypedQuestionVoiceAnswersEnabled =
             UserDefaults.standard.object(forKey: "shortcut_floatingBarTypedQuestionVoiceAnswersEnabled") as? Bool ?? false
+        self.agentVoiceAnnouncementsEnabled =
+            UserDefaults.standard.object(forKey: "shortcut_agentVoiceAnnouncementsEnabled") as? Bool ?? true
         self.voicePlaybackSpeed = UserDefaults.standard.object(forKey: "shortcut_voicePlaybackSpeed") as? Float ?? 1.4
         let storedVoiceID = UserDefaults.standard.string(forKey: "shortcut_selectedVoiceID") ?? Self.defaultVoiceID
         let validVoiceID = Self.availableVoices.contains(where: { $0.id == storedVoiceID })
