@@ -1183,12 +1183,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
           if !success {
             log("AppDelegate: [MENUBAR] Screen capture failed to start: \(error ?? "unknown")")
             sender.state = .off
-            AssistantSettings.shared.screenAnalysisEnabled = false
+            // Don't clobber persisted intent on transient permission failure —
+            // leave it true so app-active self-heal can retry.
+            if error != ProactiveAssistantsPlugin.permissionNotGrantedError {
+              AssistantSettings.shared.screenAnalysisEnabled = false
+            }
           }
         }
       }
     } else {
       AssistantSettings.shared.screenAnalysisEnabled = false
+      UserDefaults.standard.set(true, forKey: "screenAnalysisSelfHeal_v3")
       ProactiveAssistantsPlugin.shared.stopMonitoring()
     }
   }

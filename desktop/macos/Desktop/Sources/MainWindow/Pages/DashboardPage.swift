@@ -766,19 +766,24 @@ struct DashboardPage: View {
         AnalyticsManager.shared.settingToggled(setting: "monitoring", enabled: enabled)
 
         if enabled {
-            ProactiveAssistantsPlugin.shared.startMonitoring { success, _ in
+            ProactiveAssistantsPlugin.shared.startMonitoring { success, error in
                 DispatchQueue.main.async {
                     isTogglingCapture = false
                     isCaptureMonitoring = ProactiveAssistantsPlugin.shared.isMonitoring
                     if !success {
-                        screenAnalysisEnabled = false
-                        AssistantSettings.shared.screenAnalysisEnabled = false
+                        // Don't clobber persisted intent on transient permission
+                        // failure — leave it true for app-active self-heal.
+                        if error != ProactiveAssistantsPlugin.permissionNotGrantedError {
+                            screenAnalysisEnabled = false
+                            AssistantSettings.shared.screenAnalysisEnabled = false
+                        }
                         isCaptureMonitoring = false
                     }
                 }
             }
         } else {
             ProactiveAssistantsPlugin.shared.stopMonitoring()
+            UserDefaults.standard.set(true, forKey: "screenAnalysisSelfHeal_v3")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 isTogglingCapture = false
                 isCaptureMonitoring = false

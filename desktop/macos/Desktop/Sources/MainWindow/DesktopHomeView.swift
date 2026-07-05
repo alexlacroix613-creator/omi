@@ -212,6 +212,30 @@ struct DesktopHomeView: View {
                     "DesktopHomeView: Deferring screen analysis — API keys not yet loaded"
                   )
                 }
+              } else if !AppBuild.usesLazyDevPermissions {
+                // SELF-HEAL (launch, one-shot): screenAnalysisEnabled is false but
+                // the user is on a production bundle. If TCC says granted and we're
+                // not paywalled, the flag was likely clobbered by a transient
+                // permission failure on a prior launch (pre-fix code force-set it
+                // false on any startMonitoring failure). Re-arm ONCE — gated by a
+                // migration flag so we don't fight a user who EXPLICITLY turned it off.
+                // After this one-shot runs, Part A (no-clobber-on-permission-failure)
+                // keeps the flag alive going forward.
+                let selfHealKey = "screenAnalysisSelfHeal_v3"
+                if !UserDefaults.standard.bool(forKey: selfHealKey) {
+                  UserDefaults.standard.set(true, forKey: selfHealKey)
+                  let plugin = ProactiveAssistantsPlugin.shared
+                  plugin.refreshScreenRecordingPermission()
+                  if plugin.hasScreenRecordingPermission, !AppState.isPaywalledEffective, APIKeyService.keysAvailable {
+                    log("DesktopHomeView: Self-heal (launch) — TCC granted but screenAnalysisEnabled=false, re-arming")
+                    AssistantSettings.shared.screenAnalysisEnabled = true
+                    scheduleProactiveMonitoringStart(reason: "launch self-heal")
+                  } else if !APIKeyService.keysAvailable {
+                    // Keys not loaded yet — re-arm the flag so the onChange(keys) retry fires.
+                    log("DesktopHomeView: Self-heal (launch) — re-arming flag, waiting for API keys")
+                    AssistantSettings.shared.screenAnalysisEnabled = true
+                  }
+                }
               } else {
                 log("DesktopHomeView: Screen analysis disabled in settings, skipping auto-start")
               }
@@ -260,6 +284,23 @@ struct DesktopHomeView: View {
                 if plugin.hasScreenRecordingPermission {
                   log("DesktopHomeView: Permission available on app active — scheduling monitoring")
                   scheduleProactiveMonitoringStart(reason: "app active")
+                }
+              } else if !AssistantSettings.shared.screenAnalysisEnabled && !plugin.isMonitoring {
+                // SELF-HEAL (app-active, one-shot): screenAnalysisEnabled was
+                // clobbered to false by a transient permission failure on a prior
+                // launch. If TCC now says granted, the user's original intent was
+                // to have monitoring on — re-arm ONCE. Gated by a migration flag so
+                // we don't fight a user who explicitly turned monitoring off: after
+                // the first heal, the flag stays set and Part A prevents future clobbering.
+                let selfHealKey = "screenAnalysisSelfHeal_v3"
+                if !UserDefaults.standard.bool(forKey: selfHealKey) {
+                  UserDefaults.standard.set(true, forKey: selfHealKey)
+                  plugin.refreshScreenRecordingPermission()
+                  if plugin.hasScreenRecordingPermission, !AppState.isPaywalledEffective, APIKeyService.keysAvailable {
+                    log("DesktopHomeView: Self-heal (app-active) — TCC granted but screenAnalysisEnabled=false, re-arming")
+                    AssistantSettings.shared.screenAnalysisEnabled = true
+                    scheduleProactiveMonitoringStart(reason: "app active self-heal")
+                  }
                 }
               }
             }

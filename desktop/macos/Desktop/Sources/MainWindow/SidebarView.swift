@@ -1087,19 +1087,32 @@ struct SidebarView: View {
     AssistantSettings.shared.screenAnalysisEnabled = enabled
 
     if enabled {
-      ProactiveAssistantsPlugin.shared.startMonitoring { success, _ in
+      ProactiveAssistantsPlugin.shared.startMonitoring { success, error in
         DispatchQueue.main.async {
           isTogglingMonitoring = false
           if !success {
-            // Revert on failure including persistent setting
+            // Revert the live monitoring state…
             isMonitoring = false
-            screenAnalysisEnabled = false
-            AssistantSettings.shared.screenAnalysisEnabled = false
+            // …but only clobber the user's persisted intent for non-permission
+            // failures. A transient "permission not granted" (stale TCC cache,
+            // late grant after re-sign, Launch Services churn) must NOT flip
+            // screenAnalysisEnabled to false — that would dead-end the app-active
+            // self-heal path, which is gated on this flag being true. Leave it
+            // on so the next didBecomeActive / launch retries cleanly.
+            if error != ProactiveAssistantsPlugin.permissionNotGrantedError {
+              screenAnalysisEnabled = false
+              AssistantSettings.shared.screenAnalysisEnabled = false
+            } else {
+              log("SidebarView: startMonitoring failed on permission — keeping screenAnalysisEnabled=true for self-heal retry")
+            }
           }
         }
       }
     } else {
       ProactiveAssistantsPlugin.shared.stopMonitoring()
+      // Mark the self-heal migration as done so app-active/launch self-heal
+      // doesn't re-arm it — the user explicitly turned monitoring off.
+      UserDefaults.standard.set(true, forKey: "screenAnalysisSelfHeal_v3")
       // Small delay to show the loading state visually
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
         isTogglingMonitoring = false

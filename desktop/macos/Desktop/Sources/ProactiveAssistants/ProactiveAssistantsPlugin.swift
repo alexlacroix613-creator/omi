@@ -201,6 +201,12 @@ public class ProactiveAssistantsPlugin: NSObject {
 
     // MARK: - Public Monitoring Control
 
+    /// Error string returned by `startMonitoring` when screen recording permission
+    /// is not granted. Callers compare against this to decide whether to clobber
+    /// the persisted `screenAnalysisEnabled` flag — a transient permission failure
+    /// must NOT clobber it (the self-heal path depends on the flag staying true).
+    static let permissionNotGrantedError = "Screen recording permission not granted"
+
     /// Start monitoring with optional retry for transient permission failures
     public func startMonitoring(retryCount: Int = 0, completion: @escaping (Bool, String?) -> Void) {
         let maxRetries = 3
@@ -252,7 +258,7 @@ public class ProactiveAssistantsPlugin: NSObject {
 
             log("Screen recording permission not granted after \(maxRetries) retries, giving up")
             isStartingMonitoring = false
-            completion(false, "Screen recording permission not granted")
+            completion(false, Self.permissionNotGrantedError)
             return
         }
 

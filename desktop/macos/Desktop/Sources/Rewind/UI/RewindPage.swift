@@ -143,10 +143,15 @@ struct RewindPage: View {
         .onReceive(NotificationCenter.default.publisher(for: .assistantMonitoringStateDidChange)) { _ in
             let pluginState = ProactiveAssistantsPlugin.shared.isMonitoring
             isMonitoring = pluginState
-            // Keep persistent setting in sync when monitoring stops due to errors
+            // Keep persistent setting in sync when monitoring stops — but ONLY
+            // when the user explicitly toggled it off. If monitoring stopped
+            // due to a transient permission failure, keep screenAnalysisEnabled
+            // true so the app-active self-heal path can retry.
             if !pluginState && screenAnalysisEnabled {
-                screenAnalysisEnabled = false
-                AssistantSettings.shared.screenAnalysisEnabled = false
+                // Don't clobber here — the stop came from an error path, not a
+                // user toggle. The user-toggle paths (toggleMonitoring) handle
+                // their own persistence. Leaving the flag true enables recovery.
+                log("RewindPage: monitoring stopped — keeping screenAnalysisEnabled=true for self-heal")
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .expandRewindTranscript)) { _ in
@@ -371,19 +376,24 @@ struct RewindPage: View {
         AssistantSettings.shared.screenAnalysisEnabled = enabled
 
         if enabled {
-            ProactiveAssistantsPlugin.shared.startMonitoring { success, _ in
+            ProactiveAssistantsPlugin.shared.startMonitoring { success, error in
                 DispatchQueue.main.async {
                     isTogglingMonitoring = false
                     if !success {
                         isMonitoring = false
-                        // Revert persistent setting so UI and auto-start stay in sync
-                        screenAnalysisEnabled = false
-                        AssistantSettings.shared.screenAnalysisEnabled = false
+                        // Don't clobber persisted intent on transient permission
+                        // failure — leave it true for app-active self-heal.
+                        if error != ProactiveAssistantsPlugin.permissionNotGrantedError {
+                            // Revert persistent setting so UI and auto-start stay in sync
+                            screenAnalysisEnabled = false
+                            AssistantSettings.shared.screenAnalysisEnabled = false
+                        }
                     }
                 }
             }
         } else {
             ProactiveAssistantsPlugin.shared.stopMonitoring()
+            UserDefaults.standard.set(true, forKey: "screenAnalysisSelfHeal_v3")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 isTogglingMonitoring = false
             }
