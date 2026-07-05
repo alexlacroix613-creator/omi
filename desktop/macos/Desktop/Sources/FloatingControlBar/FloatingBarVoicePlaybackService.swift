@@ -326,6 +326,7 @@ final class FloatingBarVoicePlaybackService: NSObject, AVAudioPlayerDelegate, AV
   func speakOneShot(_ text: String) {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
+    log("FloatingBarVoicePlaybackService: speakOneShot called (chars=\(trimmed.count), preview='\(trimmed.prefix(80))')")
     let mode = currentMode ?? resolvePlaybackMode()
     currentMode = mode
     switch mode {

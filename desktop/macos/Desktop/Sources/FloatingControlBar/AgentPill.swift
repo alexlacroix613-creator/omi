@@ -1251,6 +1251,7 @@ final class AgentPillsManager: ObservableObject {
             // doesn't become a 2-minute monologue.
             if ShortcutSettings.shared.agentVoiceAnnouncementsEnabled {
                 let spoken = Self.spokenSummary(from: trimmedFinalText)
+                log("AgentPill: complete() — speaking summary (chars=\(spoken.count), enabled=true, preview='\(spoken.prefix(80))')")
                 FloatingBarVoicePlaybackService.shared.speakOneShot(spoken)
             }
         } else {
