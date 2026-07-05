@@ -890,6 +890,34 @@ extension SettingsContentView {
           }
           Spacer()
         }
+
+        Divider()
+
+        // Live cost-aware routing toggle. When enabled, sendMessage re-routes
+        // to the cheapest capable provider before querying the bridge.
+        HStack(spacing: 8) {
+          Image(systemName: "arrow.triangle.swap")
+            .scaledFont(size: 12)
+            .foregroundColor(OmiColors.textTertiary)
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Auto-route to cheapest provider")
+              .scaledFont(size: 12, weight: .medium)
+              .foregroundColor(OmiColors.textPrimary)
+            Text("Switch the active bridge to the cheapest capable model before each message.")
+              .scaledFont(size: 11)
+              .foregroundColor(OmiColors.textTertiary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+          Spacer()
+          if let cp = chatProvider {
+            Toggle("", isOn: Binding(
+              get: { cp.costAwareRoutingEnabled },
+              set: { cp.costAwareRoutingEnabled = $0 }
+            ))
+            .labelsHidden()
+            .tint(OmiColors.success)
+          }
+        }
       }
     }
     .onAppear {

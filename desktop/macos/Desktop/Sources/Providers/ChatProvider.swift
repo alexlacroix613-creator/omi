@@ -922,6 +922,50 @@ BROWSER TABS: when you use the browser (Playwright), on your FIRST browser actio
         return Self.harnessMode(for: BridgeMode(rawValue: mode) ?? .piMono)
     }
 
+    /// Opt-in toggle for live cost-aware routing. When true, sendMessage
+    /// re-routes traffic to the cheapest capable provider before querying the
+    /// bridge. Default false — the user must enable it in Settings.
+    @AppStorage("costAwareRoutingEnabled") var costAwareRoutingEnabled: Bool = false
+
+    /// Build a CostAwareModelRouter.Availability snapshot from the current
+    /// connection state. Called by applyCostAwareRouting.
+    private func costRouterAvailability() -> CostAwareModelRouter.Availability {
+        CostAwareModelRouter.Availability(
+            claudeConnected: isClaudeConnected,
+            chatGPTConnected: isChatGPTConnected,
+            openRouterKeyPresent: APIKeyService.currentOpenRouterKey != nil
+        )
+    }
+
+    /// Re-route the active bridge to the cheapest capable provider for the
+    /// given workload. Only fires when:
+    /// - cost-aware routing is enabled (opt-in)
+    /// - not already sending or switching modes
+    /// - the target bridge mode differs from the active one
+    /// Returns the chosen Route (for logging), or nil if no switch happened.
+    @discardableResult
+    func applyCostAwareRouting(workload: CostAwareModelRouter.Workload) async -> CostAwareModelRouter.Route? {
+        guard costAwareRoutingEnabled else { return nil }
+        guard !isSending, !modeSwitchInProgress else {
+            log("ChatProvider: cost-aware routing skipped — send or mode switch in progress")
+            return nil
+        }
+
+        let availability = costRouterAvailability()
+        let route = CostAwareModelRouter.route(workload: workload, availability: availability)
+        let targetBridge = CostAwareModelRouter.bridgeMode(for: route)
+        let currentBridge = BridgeMode(rawValue: bridgeMode) ?? .piMono
+
+        if targetBridge == currentBridge {
+            log("ChatProvider: cost-aware routing — already on \(route.providerLabel) (\(route.reason))")
+            return route
+        }
+
+        log("ChatProvider: cost-aware routing — switching to \(route.providerLabel) (\(route.reason))")
+        await switchBridgeMode(to: targetBridge)
+        return route
+    }
+
     /// The legacy "$50 lifetime Omi AI spend" upgrade nudge (`showOmiThresholdAlert`)
     /// must never fire for users who already pay — paid subscribers and BYOK users
     /// aren't capped by the free Omi quota. `omiAICumulativeCostUsd` is seeded from the
@@ -3302,6 +3346,14 @@ BROWSER TABS: when you use the browser (Playwright), on your FIRST browser actio
                 return nil
             }
             sessionId = sid
+        }
+
+        // Live cost-aware routing: if enabled, switch to the cheapest capable
+        // provider before querying the bridge. Skipped for follow-ups (they
+        // should use the same provider as the original message) and when a
+        // send or mode switch is already in progress.
+        if !isFollowUp {
+            await applyCostAwareRouting(workload: .balanced)
         }
 
         isSending = true

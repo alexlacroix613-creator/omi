@@ -127,4 +127,54 @@ final class CostAwareModelRouterTests: XCTestCase {
     XCTAssertEqual(route.modelIdentifier, "on-device")
     XCTAssertEqual(route.providerLabel, "On-device")
   }
+
+  // MARK: - Bridge Mode Mapping (live cost-router)
+
+  func testBridgeModeForClaudeRoute() {
+    let route = CostAwareModelRouter.route(
+      workload: .balanced,
+      availability: CostAwareModelRouter.Availability(
+        claudeConnected: true,
+        chatGPTConnected: true,
+        openRouterKeyPresent: true
+      )
+    )
+    XCTAssertEqual(CostAwareModelRouter.bridgeMode(for: route), .userClaude)
+  }
+
+  func testBridgeModeForChatGPTRoute() {
+    let route = CostAwareModelRouter.route(
+      workload: .balanced,
+      availability: CostAwareModelRouter.Availability(
+        claudeConnected: false,
+        chatGPTConnected: true,
+        openRouterKeyPresent: true
+      )
+    )
+    XCTAssertEqual(CostAwareModelRouter.bridgeMode(for: route), .userChatGPT)
+  }
+
+  func testBridgeModeForOpenRouterRoute() {
+    let route = CostAwareModelRouter.route(
+      workload: .cheap,
+      availability: CostAwareModelRouter.Availability(
+        claudeConnected: false,
+        chatGPTConnected: false,
+        openRouterKeyPresent: true
+      )
+    )
+    XCTAssertEqual(CostAwareModelRouter.bridgeMode(for: route), .openClaw)
+  }
+
+  func testBridgeModeForOnDeviceRoute() {
+    let route = CostAwareModelRouter.route(
+      workload: .balanced,
+      availability: CostAwareModelRouter.Availability(
+        claudeConnected: false,
+        chatGPTConnected: false,
+        openRouterKeyPresent: false
+      )
+    )
+    XCTAssertEqual(CostAwareModelRouter.bridgeMode(for: route), .piMono)
+  }
 }

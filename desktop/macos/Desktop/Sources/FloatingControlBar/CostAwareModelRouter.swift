@@ -113,4 +113,25 @@ enum CostAwareModelRouter {
       return onDeviceRoute
     }
   }
+
+  /// Map a `Route` to the `ChatProvider.BridgeMode` that can serve it.
+  /// Used by the live cost-router to switch the active bridge to the cheapest
+  /// capable provider before sending traffic.
+  ///
+  /// - Claude  → .userClaude  (acp harness — Claude subscription)
+  /// - ChatGPT → .userChatGPT (codex harness — ChatGPT/Codex subscription)
+  /// - OpenRouter (free) → .openClaw (openclaw harness — BYOK, uses OR key)
+  /// - On-device / unknown → .piMono (Omi cloud default)
+  static func bridgeMode(for route: Route) -> ChatProvider.BridgeMode {
+    switch route.providerLabel {
+    case "Claude":
+      return .userClaude
+    case "ChatGPT":
+      return .userChatGPT
+    case "OpenRouter (free)":
+      return .openClaw
+    default:
+      return .piMono
+    }
+  }
 }
