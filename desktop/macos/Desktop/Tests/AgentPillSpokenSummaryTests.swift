@@ -175,4 +175,41 @@ final class AgentPillSpokenSummaryTests: XCTestCase {
       query: "Q", answer: "A", followUps: [])
     XCTAssertTrue(spoken.hasSuffix("Want me to go further? Just say so."))
   }
+
+  /// Regression: extractNextSteps must run on markdown-stripped text, not raw
+  /// markdown. A "*Next steps:*\n- item\n- item" block should parse as separate
+  /// action sentences, not one giant sentence with embedded bullets.
+  func testExtractNextStepsHandlesMarkdownBulletsInAnswer() {
+    let markdownAnswer = """
+## Weather Report
+
+The forecast is sunny, 24°C.
+
+*Next steps:*
+- Check the afternoon forecast before your meeting
+- Open the calendar to confirm 3pm timing
+
+You should bring sunglasses.
+"""
+    let spoken = AgentPillsManager.structuredSpokenSummary(
+      query: "Weather?", answer: markdownAnswer, followUps: [])
+    // "Check the afternoon forecast" and "Open the calendar" should be detected
+    // as imperative-starter action sentences AFTER markdown stripping.
+    XCTAssertTrue(spoken.contains("Next:"))
+    XCTAssertTrue(spoken.contains("Check"))
+    XCTAssertTrue(spoken.contains("Open"))
+    // Must NOT contain raw markdown bullet/asterisk leakage.
+    XCTAssertFalse(spoken.contains("*Next"))
+    XCTAssertFalse(spoken.contains("- Check"))
+  }
+
+  func testExtractNextStepsOnCleanedTextOnly() {
+    // Use actual newlines (not literal \n) in the raw text.
+    let raw = "*- Check the logs\n- Run the tests*"
+    let cleaned = AgentPillsManager.stripMarkdownOnly(from: raw)
+    XCTAssertFalse(cleaned.contains("*"))
+    XCTAssertFalse(cleaned.contains("\n"))
+    let steps = AgentPillsManager.extractNextSteps(from: cleaned)
+    XCTAssertFalse(steps.isEmpty)
+  }
 }

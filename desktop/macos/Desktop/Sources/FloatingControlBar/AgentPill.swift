@@ -1305,7 +1305,25 @@ final class AgentPillsManager: ObservableObject {
     /// Clean an agent's raw final text into a speakable answer line.
     /// Strips markdown, collapses whitespace, truncates at a word boundary.
     nonisolated static func spokenAnswer(from text: String) -> String {
-        // Strip common markdown: headers, bold, italic, code blocks, links
+        let cleaned = stripMarkdownOnly(from: text)
+
+        // Truncate to ~300 chars at a word boundary (shorter for structured summary)
+        let limit = 300
+        if cleaned.count > limit {
+            let prefix = cleaned.prefix(limit)
+            if let lastSpace = prefix.lastIndex(of: " ") {
+                return String(cleaned[..<lastSpace]) + "…"
+            }
+            return String(cleaned.prefix(limit)) + "…"
+        }
+        return cleaned
+    }
+
+    /// Strip common markdown formatting (headers, bold, italic, code blocks,
+    /// inline code, links, bullet/list markers) and collapse whitespace WITHOUT
+    /// truncating. Used by extractNextSteps so sentence-boundary detection works
+    /// on clean prose rather than raw markdown with embedded bullets/headers.
+    nonisolated static func stripMarkdownOnly(from text: String) -> String {
         var cleaned = text
         // Code blocks → "code block"
         cleaned = cleaned.replacingOccurrences(of: "```[\\s\\S]*?```", with: " [code block] ", options: .regularExpression)
@@ -1323,17 +1341,6 @@ final class AgentPillsManager: ObservableObject {
         // Collapse whitespace
         cleaned = cleaned.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Truncate to ~300 chars at a word boundary (shorter for structured summary)
-        let limit = 300
-        if cleaned.count > limit {
-            let prefix = cleaned.prefix(limit)
-            if let lastSpace = prefix.lastIndex(of: " ") {
-                cleaned = String(cleaned[..<lastSpace]) + "…"
-            } else {
-                cleaned = String(prefix) + "…"
-            }
-        }
         return cleaned
     }
 
@@ -1358,16 +1365,21 @@ final class AgentPillsManager: ObservableObject {
             questionLine = q
         }
 
-        // Answer: reuse the cleaned-answer helper.
+        // Answer: reuse the cleaned-answer helper (strips markdown + truncates).
         let answerLine = spokenAnswer(from: answer)
 
         // Next steps: pull action lines out of the answer if we can find them,
         // otherwise fall back to the derived follow-ups. We look for sentences
         // that read like next-actions: starting with a verb, or containing
         // "next", "should", "need to", "TODO", "I'll", "I will".
-        let nextSteps = extractNextSteps(from: answer).isEmpty
+        // NOTE: run extractNextSteps on the RAW answer but after stripping
+        // markdown bullets/headers so sentence-boundary detection actually
+        // works — otherwise a "*Next steps:*\n- item\n- item" block parses as
+        // one giant "sentence" rather than separate action lines.
+        let cleanedForExtraction = Self.stripMarkdownOnly(from: answer)
+        let nextSteps = extractNextSteps(from: cleanedForExtraction).isEmpty
             ? followUps
-            : extractNextSteps(from: answer)
+            : extractNextSteps(from: cleanedForExtraction)
         let nextLine: String
         if nextSteps.isEmpty {
             nextLine = ""
