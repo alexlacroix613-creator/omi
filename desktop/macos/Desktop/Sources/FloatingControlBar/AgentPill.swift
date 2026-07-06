@@ -1244,14 +1244,21 @@ final class AgentPillsManager: ObservableObject {
                 surface: .floatingPill(pillId: pill.id),
                 statusText: trimmedFinalText
             )
+            // Derive follow-ups BEFORE the voice announcement so the structured
+            // summary can include them as the "next steps" line.
+            pill.suggestedFollowUps = AgentPillsManager.deriveFollowUps(for: pill)
             // Speak the agent's result aloud so Alex doesn't have to
             // physically check the floating bar. Gated behind a setting
             // (default true — this is the core "hey, here's your answer"
-            // feedback loop). Truncates to ~500 chars so a long analysis
-            // doesn't become a 2-minute monologue.
+            // feedback loop). Structured as question / answer / next steps /
+            // follow-up so Alex gets context, not just a raw result read aloud.
             if ShortcutSettings.shared.agentVoiceAnnouncementsEnabled {
-                let spoken = Self.spokenSummary(from: trimmedFinalText)
-                log("AgentPill: complete() — speaking summary (chars=\(spoken.count), enabled=true, preview='\(spoken.prefix(80))')")
+                let spoken = Self.structuredSpokenSummary(
+                    query: pill.query,
+                    answer: trimmedFinalText,
+                    followUps: pill.suggestedFollowUps
+                )
+                log("AgentPill: complete() — speaking structured summary (chars=\(spoken.count), enabled=true, preview='\(spoken.prefix(80))')")
                 FloatingBarVoicePlaybackService.shared.speakOneShot(spoken)
             }
         } else {
@@ -1292,6 +1299,12 @@ final class AgentPillsManager: ObservableObject {
     /// doesn't become a 2-minute monologue, and adds a brief prefix so the
     /// user knows an agent just finished.
     nonisolated static func spokenSummary(from text: String) -> String {
+        return spokenAnswer(from: text)
+    }
+
+    /// Clean an agent's raw final text into a speakable answer line.
+    /// Strips markdown, collapses whitespace, truncates at a word boundary.
+    nonisolated static func spokenAnswer(from text: String) -> String {
         // Strip common markdown: headers, bold, italic, code blocks, links
         var cleaned = text
         // Code blocks → "code block"
@@ -1311,8 +1324,8 @@ final class AgentPillsManager: ObservableObject {
         cleaned = cleaned.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Truncate to ~500 chars at a word boundary
-        let limit = 500
+        // Truncate to ~300 chars at a word boundary (shorter for structured summary)
+        let limit = 300
         if cleaned.count > limit {
             let prefix = cleaned.prefix(limit)
             if let lastSpace = prefix.lastIndex(of: " ") {
@@ -1322,6 +1335,86 @@ final class AgentPillsManager: ObservableObject {
             }
         }
         return cleaned
+    }
+
+    /// Build a structured spoken summary: question, answer, next steps, follow-up.
+    /// This is the format Alex asked for — not just the raw result read aloud,
+    /// but a clear four-part structure so he knows what he asked, what he got,
+    /// what's next, and that he can continue the thread by voice.
+    /// Pure/no actor state — safe to call off the main actor.
+    nonisolated static func structuredSpokenSummary(
+        query: String,
+        answer: String,
+        followUps: [String]
+    ) -> String {
+        // Question: trim to one clean line; if it's very long, truncate.
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let questionLine: String
+        if q.isEmpty {
+            questionLine = ""
+        } else if q.count > 160 {
+            questionLine = String(q.prefix(157)) + "…"
+        } else {
+            questionLine = q
+        }
+
+        // Answer: reuse the cleaned-answer helper.
+        let answerLine = spokenAnswer(from: answer)
+
+        // Next steps: pull action lines out of the answer if we can find them,
+        // otherwise fall back to the derived follow-ups. We look for sentences
+        // that read like next-actions: starting with a verb, or containing
+        // "next", "should", "need to", "TODO", "I'll", "I will".
+        let nextSteps = extractNextSteps(from: answer).isEmpty
+            ? followUps
+            : extractNextSteps(from: answer)
+        let nextLine: String
+        if nextSteps.isEmpty {
+            nextLine = ""
+        } else {
+            let joined = nextSteps.prefix(2).joined(separator: ", ")
+            nextLine = "Next: \(joined)."
+        }
+
+        // Follow-up: a standing offer to continue the thread.
+        let followUpLine = "Want me to go further? Just say so."
+
+        // Assemble. Skip empty parts so we don't read "blank. blank."
+        var parts: [String] = []
+        if !questionLine.isEmpty { parts.append("You asked: \(questionLine).") }
+        if !answerLine.isEmpty { parts.append("Here's what I found: \(answerLine).") }
+        if !nextLine.isEmpty { parts.append(nextLine) }
+        parts.append(followUpLine)
+        return parts.joined(separator: " ")
+    }
+
+    /// Pull sentences out of the answer that read like next-action items.
+    /// Looks for "next", "should", "need to", "TODO", "I'll", "I will",
+    /// or a leading imperative verb. Returns up to 2 candidates.
+    nonisolated static func extractNextSteps(from text: String) -> [String] {
+        // Split on sentence boundaries: . ! ? followed by space/nl
+        let sentences = text.replacingOccurrences(of: "([.!?])(?=\\s)", with: "$1\n", options: .regularExpression)
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        let actionKeywords = ["next", "should", "need to", "todo", "i'll", "i will", "recommend", "suggest"]
+        let imperativeStarters = ["open ", "run ", "check ", "verify ", "review ", "update ", "create ", "delete ",
+                                  "send ", "write ", "fix ", "build ", "test ", "deploy ", "install ", "git "]
+
+        var hits: [String] = []
+        for sentence in sentences {
+            let lower = sentence.lowercased()
+            let isAction = actionKeywords.contains(where: { lower.contains($0) })
+                || imperativeStarters.contains(where: { lower.hasPrefix($0) })
+            if isAction {
+                // Trim and cap at 100 chars
+                let trimmed = sentence.count > 100 ? String(sentence.prefix(97)) + "…" : sentence
+                hits.append(trimmed)
+            }
+            if hits.count >= 2 { break }
+        }
+        return hits
     }
 
     private static func apply(projection: AgentRunProjection, to pill: AgentPill) {

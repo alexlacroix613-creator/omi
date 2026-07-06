@@ -609,6 +609,38 @@ version: **siempre7 / 12006**.
   "question, answer, next steps and follow up" instead of the raw result. This is
   item 12 below.
 
+### 12. [DONE this iteration] Structured spoken summary — question / answer / next steps / follow-up
+- **Value 4 · Effort S · Risk Low** — Alex explicitly asked for the spoken summary
+  to be structured, not just the raw result read aloud.
+- Built:
+  - `AgentPillsManager.structuredSpokenSummary(query:answer:followUps:)` — pure,
+    `nonisolated static`. Assembles four parts: "You asked: <query>." / "Here's what
+    I found: <cleaned answer>." / "Next: <next steps>." / "Want me to go further?
+    Just say so." Empty parts are skipped so we never read "blank. blank."
+  - `AgentPillsManager.spokenAnswer(from:)` — factored out of the old `spokenSummary`
+    so the structured path can reuse the markdown-stripping/truncation logic. Truncation
+    lowered from 500 → 300 chars so the structured summary (which adds question +
+    next-steps + follow-up framing) doesn't run too long.
+  - `AgentPillsManager.extractNextSteps(from:)` — pure sentence-action detector.
+    Splits on `.`, `!`, `?`, then flags sentences containing action keywords
+    ("next", "should", "need to", "TODO", "I'll", "I will", "recommend", "suggest")
+    OR starting with an imperative verb (open, run, check, verify, review, update,
+    create, delete, send, write, fix, build, test, deploy, install, git). Caps at 2
+    candidates. Falls back to the derived `suggestedFollowUps` if the answer has no
+    detectable action lines.
+  - `AgentPill.complete()` call site now calls `structuredSpokenSummary` with
+    `pill.query`, the cleaned final text, and `pill.suggestedFollowUps` (derived
+    before the voice call so they're available).
+  - `spokenSummary(from:)` is now a thin wrapper over `spokenAnswer` — the old
+    single-arg API is preserved so existing call sites and tests don't break.
+  - Tests: `Tests/AgentPillSpokenSummaryTests.swift` (21/21) — all 10 original
+    markdown/stripping/truncation tests updated for the 300-char limit, plus 11 new
+    tests covering the structured summary (all four parts present, follow-up
+    fallback when no actions in answer, next-step extraction from answer, empty
+    query handling, long-query truncation, no-next-line when no follow-ups and no
+    actions, imperative-starter detection, action-keyword detection, 2-candidate cap,
+    empty-result case, follow-up always last).
+
 ## Notes for future iterations
 - The in-app bridge path (AgentPill / ChatProvider / AgentRuntimeStatusStore /
   StallDetector) is mature and well-tested — build ON it, don't rebuild it.
