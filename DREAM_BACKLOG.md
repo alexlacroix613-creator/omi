@@ -609,10 +609,28 @@ version: **siempre7 / 12006**.
   "question, answer, next steps and follow up" instead of the raw result. This is
   item 12 below.
 
-### 12. [DONE this iteration] Structured spoken summary — question / answer / next steps / follow-up
-- **Value 4 · Effort S · Risk Low** — Alex explicitly asked for the spoken summary
-  to be structured, not just the raw result read aloud.
-- Built:
+### 12. [DONE — shipped in siempre8/12008, 2026-07-06]
+**Structured spoken summary** — agent voice now speaks a four-part structure
+instead of reading raw results aloud:
+1. **Question:** "You asked: <query>."
+2. **Answer:** "Here's what I found: <cleaned answer>."
+3. **Next steps:** "Next: <action 1>, <action 2>." (extracted from answer, falls back to derived follow-ups)
+4. **Follow-up:** "Want me to go further? Just say so."
+
+Implementation:
+- `AgentPillsManager.structuredSpokenSummary(query:answer:followUps:)` — nonisolated static, skips empty parts
+- `spokenAnswer(from:)` — markdown strip + 300-char truncate
+- `stripMarkdownOnly(from:)` — markdown strip without truncation (for next-step extraction)
+- `extractNextSteps(from:)` — detects imperative-starter + keyword action sentences, caps at 2
+- `AgentPill.complete()` call site rewired to use structured summary
+- **Bug fixed:** extractNextSteps now runs on markdown-stripped text (was running on raw answer, causing bullet/header leakage in the "Next:" line)
+- Tests: 23/23 pass (`Tests/AgentPillSpokenSummaryTests.swift`)
+- Commits: `b5539103b` (initial), `6f24a856d` (bug fix)
+- Build: siempre8/12008, plain ad-hoc, flags=0x2, deep verify OK
+- Installed: `/Applications/omi.app` (pid 56784 running, binary matches build)
+ - **Value 4 · Effort S · Risk Low** — Alex explicitly asked for the spoken summary
+   to be structured, not just the raw result read aloud.
+ - Built:
   - `AgentPillsManager.structuredSpokenSummary(query:answer:followUps:)` — pure,
     `nonisolated static`. Assembles four parts: "You asked: <query>." / "Here's what
     I found: <cleaned answer>." / "Next: <next steps>." / "Want me to go further?
