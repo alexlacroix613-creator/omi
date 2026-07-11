@@ -503,7 +503,7 @@ if [ -d "$ONNX_FRAMEWORK" ]; then
 fi
 
 # Copy libwebp dylibs and rewrite load paths
-WEBP_LIB="$(pkg-config --variable=libdir libwebp 2>/dev/null)/libwebp.7.dylib"
+WEBP_LIB="/opt/homebrew/opt/webp/lib/libwebp.7.dylib"
 if [ -f "$WEBP_LIB" ]; then
     substep "Bundling libwebp"
     mkdir -p "$APP_BUNDLE/Contents/Frameworks"
