@@ -1,0 +1,3 @@
+{
+  "change": "Fixed a crash when the local log file becomes unwritable or the disk is full"
+}

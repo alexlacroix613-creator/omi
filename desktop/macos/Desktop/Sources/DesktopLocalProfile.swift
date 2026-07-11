@@ -2,18 +2,24 @@ import Foundation
 
 /// Runtime switches for the harness-owned Omi Dev local profile.
 ///
-/// Production and beta keep their existing bundle identifiers. The local harness
-/// reuses the default ``Omi Dev`` bundle (`com.omi.desktop-dev`) so macOS
-/// permissions and storage paths are preserved; only API endpoints and Firebase
-/// Auth switch to localhost emulators when ``OMI_DESKTOP_LOCAL_PROFILE=1``.
+/// Production keeps its existing storage root. The permanent Companion bundle
+/// has an explicit, stable root so it can never open or migrate the official
+/// app's database. The local harness can still override its root with
+/// ``OMI_LOCAL_PROFILE_STORAGE_NAME``.
 enum DesktopLocalProfile {
   static var isEnabled: Bool {
     value("OMI_DESKTOP_LOCAL_PROFILE") == "1"
   }
 
   static var storageDirectoryName: String {
-    guard isEnabled else { return "Omi" }
-    return nonEmpty(value("OMI_LOCAL_PROFILE_STORAGE_NAME")) ?? "Omi"
+    if isEnabled {
+      return nonEmpty(value("OMI_LOCAL_PROFILE_STORAGE_NAME")) ?? "Omi"
+    }
+    return storageDirectoryName(bundleIdentifier: Bundle.main.bundleIdentifier)
+  }
+
+  static func storageDirectoryName(bundleIdentifier: String?) -> String {
+    bundleIdentifier == "com.omi.omi-companion" ? "Omi Companion" : "Omi"
   }
 
   static var authEmulatorHost: String? {

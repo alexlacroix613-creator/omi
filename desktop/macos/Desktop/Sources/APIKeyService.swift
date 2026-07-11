@@ -6,9 +6,9 @@ import Foundation
 ///
 /// Also hosts the Bring-Your-Own-Key (BYOK) free-plan flow: when the user supplies
 /// their own OpenAI, Anthropic, Gemini, and Deepgram keys, the app sends them along
-/// with every request and the backend skips subscription billing. Keys live in
-/// UserDefaults (reusing the existing dev-override AppStorage pattern); the backend
-/// only ever sees SHA-256 fingerprints for state tracking.
+/// with every request and the backend skips subscription billing. User credentials
+/// live in the bundle-scoped Keychain; the backend only receives fingerprints for
+/// state tracking and credentials required for a specific request.
 ///
 /// NOTE: Deepgram, Gemini, Anthropic keys are NO LONGER fetched from the backend —
 /// they are proxied server-side (issues #5861, #6594).
@@ -98,6 +98,10 @@ final class APIKeyService: ObservableObject {
     /// The in-flight fetch task, so callers can await it instead of polling.
     private var fetchTask: Task<Void, Never>?
 
+    private init() {
+        ProviderSecretStore.shared.migrateLegacySecretsIfNeeded()
+    }
+
     /// Start fetching keys in the background. Callers can await via waitForKeys().
     func startFetchingKeys() {
         guard !isLoaded else { return }
@@ -124,7 +128,7 @@ final class APIKeyService: ObservableObject {
     }
 
     var effectiveGeminiKey: String? {
-        nonEmpty(UserDefaults.standard.string(forKey: "dev_gemini_api_key")) ?? geminiApiKey
+        Self.byokKey(.gemini) ?? geminiApiKey
     }
 
     var effectiveFirebaseApiKey: String? {
@@ -207,17 +211,14 @@ final class APIKeyService: ObservableObject {
     // Use these from actors, nonisolated inits, and background threads.
 
     nonisolated static var currentGeminiKey: String? {
-        nonEmptyStatic(UserDefaults.standard.string(forKey: "dev_gemini_api_key"))
+        byokKey(.gemini)
             ?? (getenv("GEMINI_API_KEY").flatMap { String(validatingUTF8: $0) })
     }
 
-    /// The user's OpenRouter key, if configured. Read from UserDefaults (set via
-    /// the settings field) or the process environment. Kept separate from BYOK so
-    /// it can be forwarded to the local agent subprocess without touching the
-    /// four-provider free-plan gate.
+    /// The user's OpenRouter key, if configured in Omi's bundle-scoped Keychain.
+    /// Kept separate from the four-provider free-plan gate.
     nonisolated static var currentOpenRouterKey: String? {
-        nonEmptyStatic(UserDefaults.standard.string(forKey: openRouterStorageKey))
-            ?? (getenv("OPENROUTER_API_KEY").flatMap { String(validatingUTF8: $0) })
+        ProviderSecretStore.shared.read(.openRouter)
     }
 
     /// True when the app has enough configuration to start transcription and screen analysis.
@@ -233,9 +234,26 @@ final class APIKeyService: ObservableObject {
 
     // MARK: - BYOK (Bring Your Own Keys) — free plan
 
-    /// Read a BYOK key from UserDefaults. Returns nil if empty/whitespace.
+    /// Read a BYOK key from Omi's bundle-scoped Keychain.
     nonisolated static func byokKey(_ provider: BYOKProvider) -> String? {
-        nonEmptyStatic(UserDefaults.standard.string(forKey: provider.storageKey))
+        ProviderSecretStore.shared.read(ProviderSecretID(byok: provider))
+    }
+
+    nonisolated static func saveByokKey(_ value: String, provider: BYOKProvider) throws {
+        let id = ProviderSecretID(byok: provider)
+        if nonEmptyStatic(value) == nil {
+            try ProviderSecretStore.shared.delete(id)
+        } else {
+            try ProviderSecretStore.shared.save(value, for: id)
+        }
+    }
+
+    nonisolated static func saveOpenRouterKey(_ value: String) throws {
+        if nonEmptyStatic(value) == nil {
+            try ProviderSecretStore.shared.delete(.openRouter)
+        } else {
+            try ProviderSecretStore.shared.save(value, for: .openRouter)
+        }
     }
 
     /// True when the user has supplied keys for all four BYOK providers.

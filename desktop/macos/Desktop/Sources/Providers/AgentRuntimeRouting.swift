@@ -6,6 +6,7 @@ enum AgentHarnessMode: String {
     case hermes = "hermes"
     case openclaw = "openclaw"
     case codex = "codex"
+    case openRouter = "openrouter"
 }
 
 extension Optional where Wrapped == AgentHarnessMode {
@@ -21,6 +22,7 @@ enum AgentAdapterId: String {
     case hermes = "hermes"
     case openclaw = "openclaw"
     case codex = "codex"
+    case openRouter = "openrouter"
 }
 
 enum AgentRuntimeRouting {
@@ -36,6 +38,8 @@ enum AgentRuntimeRouting {
             return .hermes
         case .openClaw:
             return .openclaw
+        case .openRouter:
+            return .openRouter
         }
     }
 
@@ -51,6 +55,8 @@ enum AgentRuntimeRouting {
             return .openclaw
         case AgentHarnessMode.codex.rawValue:
             return .codex
+        case AgentHarnessMode.openRouter.rawValue:
+            return .openRouter
         default:
             return nil
         }
@@ -68,6 +74,8 @@ enum AgentRuntimeRouting {
             return .openclaw
         case .codex:
             return .codex
+        case .openRouter:
+            return .openRouter
         }
     }
 }

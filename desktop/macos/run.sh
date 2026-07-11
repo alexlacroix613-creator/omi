@@ -779,8 +779,29 @@ step "Auditing app bundle dependencies..."
 step "Installing to /Applications/..."
 # Install to /Applications/ so "Quit & Reopen" (after granting screen recording
 # permission) launches the correct binary instead of a stale copy elsewhere.
-ditto "$APP_BUNDLE" "$APP_PATH"
-substep "Installed to $APP_PATH"
+# Stage and verify on the same volume, then swap paths atomically. Copying over
+# an existing bundle can leave a mix of old/new files if the process is
+# interrupted, which also makes LaunchServices/TCC appear to target the wrong
+# build.
+INSTALL_STAGE="${APP_PATH}.installing.$$"
+INSTALL_BACKUP="${APP_PATH}.previous.$$"
+rm -rf "$INSTALL_STAGE" "$INSTALL_BACKUP"
+ditto "$APP_BUNDLE" "$INSTALL_STAGE"
+codesign --verify --deep --strict "$INSTALL_STAGE"
+if [ -e "$APP_PATH" ]; then
+    mv "$APP_PATH" "$INSTALL_BACKUP"
+fi
+if mv "$INSTALL_STAGE" "$APP_PATH"; then
+    rm -rf "$INSTALL_BACKUP"
+else
+    rm -rf "$INSTALL_STAGE"
+    if [ -e "$INSTALL_BACKUP" ]; then
+        mv "$INSTALL_BACKUP" "$APP_PATH"
+    fi
+    echo "ERROR: Atomic app install failed; previous bundle restored."
+    exit 1
+fi
+substep "Atomically installed to $APP_PATH"
 
 step "Clearing stale LaunchServices registration..."
 # Unregister first to clear any launch-disabled flag from stale entries,

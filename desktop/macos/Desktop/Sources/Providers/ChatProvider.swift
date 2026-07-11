@@ -903,6 +903,7 @@ BROWSER TABS: when you use the browser (Playwright), on your FIRST browser actio
         case piMono = "piMono"
         case hermes = "hermes"
         case openClaw = "openclaw"
+        case openRouter = "openrouter"
     }
     @AppStorage("chatBridgeMode") var bridgeMode: String = BridgeMode.piMono.rawValue
 
@@ -1374,8 +1375,11 @@ BROWSER TABS: when you use the browser (Playwright), on your FIRST browser actio
             // the model hint nil to avoid recording a model ID in binding metadata
             // that could trigger spurious context-changed sessions later.
             let usesNativeModelChoice = activeBridgeHarness == "hermes" || activeBridgeHarness == "openclaw"
-            let mainWarmupModel = usesNativeModelChoice ? nil : ModelQoS.Claude.chat
-            let floatingWarmupModel = usesNativeModelChoice ? nil : floatingModel
+            let usesOpenRouter = activeBridgeHarness == AgentHarnessMode.openRouter.rawValue
+            let mainWarmupModel = usesNativeModelChoice
+                ? nil : (usesOpenRouter ? "qwen/qwen3-coder:free" : ModelQoS.Claude.chat)
+            let floatingWarmupModel = usesNativeModelChoice
+                ? nil : (usesOpenRouter ? "qwen/qwen3-coder:free" : floatingModel)
             await agentBridge.warmupSession(cwd: workingDirectory, sessions: [
                 .init(key: "main", model: mainWarmupModel, systemPrompt: mainSystemPrompt),
                 .init(key: "floating", model: floatingWarmupModel, systemPrompt: floatingSystemPrompt)
@@ -1530,46 +1534,10 @@ BROWSER TABS: when you use the browser (Playwright), on your FIRST browser actio
         }
     }
 
-    /// Disconnect from Claude: clear OAuth token, switch back to free mode via serialized path
+    /// Disconnect Claude from Omi without altering Claude Desktop/CLI credentials.
     func disconnectClaude() async {
         log("ChatProvider: Disconnecting Claude account")
-
-        // 1. Clear the OAuth token from config file
-        let configPath = NSString(string: "~/Library/Application Support/Claude/config.json").expandingTildeInPath
-        if let data = FileManager.default.contents(atPath: configPath),
-           var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            json.removeValue(forKey: "oauth:tokenCache")
-            if let updatedData = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) {
-                try? updatedData.write(to: URL(fileURLWithPath: configPath))
-            }
-        }
-
-        // 2. Clear OAuth credentials from macOS Keychain
-        //    The Keychain item is owned by Claude Desktop/CLI, so SecItemDelete fails
-        //    with errSecInvalidOwnerEdit. Use the `security` CLI which runs as the user.
-        let secProcess = Process()
-        secProcess.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        secProcess.arguments = ["delete-generic-password", "-s", "Claude Code-credentials"]
-        secProcess.standardOutput = FileHandle.nullDevice
-        secProcess.standardError = FileHandle.nullDevice
-        do {
-            try secProcess.run()
-            secProcess.waitUntilExit()
-            if secProcess.terminationStatus == 0 {
-                log("ChatProvider: Cleared Claude Code credentials from Keychain")
-            } else {
-                log("ChatProvider: No Claude Code credentials found in Keychain (status=\(secProcess.terminationStatus))")
-            }
-        } catch {
-            log("ChatProvider: Failed to run security command: \(error.localizedDescription)")
-        }
-
-        // 3. Update state
         isClaudeConnected = false
-
-        // 4. Switch back to piMono through the serialized switchBridgeMode path
-        //    so all bridge lifecycle state (activeBridgeHarness, modeSwitchInProgress,
-        //    waiters) stays consistent.
         await switchBridgeMode(to: .piMono)
     }
 
@@ -1633,26 +1601,9 @@ BROWSER TABS: when you use the browser (Playwright), on your FIRST browser actio
         isChatGPTConnected = CodexAccountAuth.isConnected()
     }
 
-    /// Disconnect ChatGPT (Codex): move the token file aside (reversible), clear
-    /// state, and switch back to the free Omi account via the serialized path.
+    /// Disconnect ChatGPT from Omi without moving or deleting shared Codex auth.
     func disconnectChatGPT() async {
         log("ChatProvider: Disconnecting ChatGPT (Codex) account")
-
-        // Rename ~/.codex/auth.json → auth.json.disconnected rather than deleting,
-        // so the token can be restored and we never destroy user credentials.
-        let authPath = CodexAccountAuth.authFilePath()
-        let disconnectedPath = CodexAccountAuth.disconnectedFilePath()
-        let fileManager = FileManager.default
-        if fileManager.fileExists(atPath: authPath) {
-            try? fileManager.removeItem(atPath: disconnectedPath)
-            do {
-                try fileManager.moveItem(atPath: authPath, toPath: disconnectedPath)
-                log("ChatProvider: Moved Codex auth.json to \(disconnectedPath)")
-            } catch {
-                log("ChatProvider: Failed to move Codex auth.json: \(error.localizedDescription)")
-            }
-        }
-
         isChatGPTConnected = false
         chatGPTAuthError = nil
 
@@ -3352,8 +3303,11 @@ BROWSER TABS: when you use the browser (Playwright), on your FIRST browser actio
         // provider before querying the bridge. Skipped for follow-ups (they
         // should use the same provider as the original message) and when a
         // send or mode switch is already in progress.
+        let costAwareRoute: CostAwareModelRouter.Route?
         if !isFollowUp {
-            await applyCostAwareRouting(workload: .balanced)
+            costAwareRoute = await applyCostAwareRouting(workload: .balanced)
+        } else {
+            costAwareRoute = nil
         }
 
         isSending = true
@@ -3566,7 +3520,8 @@ BROWSER TABS: when you use the browser (Playwright), on your FIRST browser actio
             // accept Omi's Claude model aliases, so leave model choice to the
             // harness default when either native adapter is active.
             let usesNativeModelChoice = activeBridgeHarness == "hermes" || activeBridgeHarness == "openclaw"
-            let effectiveRequestModel = usesNativeModelChoice ? nil : (model ?? modelOverride)
+            let effectiveRequestModel = usesNativeModelChoice
+                ? nil : (model ?? costAwareRoute?.modelIdentifier ?? modelOverride)
 
             // Callbacks for agent bridge
             //

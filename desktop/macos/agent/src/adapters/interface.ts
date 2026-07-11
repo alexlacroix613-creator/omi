@@ -222,6 +222,20 @@ export const ADAPTER_CAPABILITY_MATRIX = {
       restartOrphanSemantics: required("Startup reconciliation orphans active attempts and marks non-resumable bindings stale."),
     },
   },
+  openrouter: {
+    adapterId: "openrouter",
+    productionAdapter: true,
+    expectations: {
+      nativeResume: unsupported("OpenRouter pi sessions are process-local and stale after daemon restart."),
+      cancellationDispatch: required("OpenRouter pi supports abort dispatch for the active prompt."),
+      cancellationAck: knownLimitation("OpenRouter pi abort resolves locally without an independent adapter ack.", "TICKET-03-follow-up-cancel-ack"),
+      pinnedWorker: required("OpenRouter pi keeps session state in-process while active."),
+      modelSwitching: required("OpenRouter pi supports explicit OpenRouter model selection."),
+      artifactEmission: unsupported("OpenRouter pi does not emit artifact references yet."),
+      toolSupport: required("OpenRouter pi uses the Omi extension/tool relay path."),
+      restartOrphanSemantics: required("Startup reconciliation orphans active attempts and marks bindings stale."),
+    },
+  },
   hermes: {
     adapterId: "hermes",
     productionAdapter: true,
@@ -279,10 +293,10 @@ export const ADAPTER_CAPABILITY_MATRIX = {
 } as const satisfies Record<string, AdapterCapabilityMatrixEntry>;
 
 export type KnownAdapterId = keyof typeof ADAPTER_CAPABILITY_MATRIX;
-export type ProductionAdapterId = "acp" | "pi-mono" | "hermes" | "openclaw" | "codex";
+export type ProductionAdapterId = "acp" | "pi-mono" | "openrouter" | "hermes" | "openclaw" | "codex";
 export type PlaceholderAdapterId = Exclude<KnownAdapterId, ProductionAdapterId>;
 
-export const PRODUCTION_ADAPTER_IDS = ["acp", "pi-mono", "hermes", "openclaw", "codex"] as const satisfies readonly ProductionAdapterId[];
+export const PRODUCTION_ADAPTER_IDS = ["acp", "pi-mono", "openrouter", "hermes", "openclaw", "codex"] as const satisfies readonly ProductionAdapterId[];
 export const PLACEHOLDER_ADAPTER_IDS = ["a2a"] as const satisfies readonly PlaceholderAdapterId[];
 
 export function isKnownAdapterId(adapterId: string): adapterId is KnownAdapterId {

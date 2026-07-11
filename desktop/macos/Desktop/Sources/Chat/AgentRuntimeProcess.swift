@@ -468,22 +468,6 @@ actor AgentRuntimeProcess {
       throw BridgeError.bridgeScriptNotFound
     }
 
-    if APIKeyService.isByokActive {
-      for provider in BYOKProvider.allCases {
-        if let key = APIKeyService.byokKey(provider) {
-          env["OMI_BYOK_\(provider.rawValue.uppercased())"] = key
-        }
-      }
-      log("AgentRuntimeProcess: pi-mono BYOK active, forwarding \(BYOKProvider.allCases.count) user keys")
-    }
-
-    // Standalone OpenRouter key — independent of BYOK. Forwarded to the agent
-    // subprocess so OpenRouter-backed model calls route through the user's key.
-    if let openRouterKey = APIKeyService.currentOpenRouterKey {
-      env["OPENROUTER_API_KEY"] = openRouterKey
-      env["OMI_OPENROUTER_API_KEY"] = openRouterKey
-    }
-
     let authService = await MainActor.run { AuthService.shared }
     if let token = try? await authService.getIdToken(), !token.isEmpty {
       env["OMI_AUTH_TOKEN"] = token
@@ -563,6 +547,25 @@ actor AgentRuntimeProcess {
 
     do {
       try await waitForInit(timeout: 30.0)
+      if APIKeyService.isByokActive {
+        for provider in BYOKProvider.allCases {
+          if let key = APIKeyService.byokKey(provider) {
+            sendJson([
+              "type": "configure_provider_credential",
+              "provider": "byok.\(provider.rawValue)",
+              "credential": key,
+            ])
+          }
+        }
+        log("AgentRuntimeProcess: configured \(BYOKProvider.allCases.count) BYOK credentials in memory")
+      }
+      if let openRouterKey = APIKeyService.currentOpenRouterKey {
+        sendJson([
+          "type": "configure_provider_credential",
+          "provider": "openrouter",
+          "credential": openRouterKey,
+        ])
+      }
     } catch {
       await cleanupFailedStart(process: proc, error: error)
       throw error
@@ -1085,7 +1088,7 @@ actor AgentRuntimeProcess {
     return homeDirectory
       .appendingPathComponent("Library")
       .appendingPathComponent("Application Support")
-      .appendingPathComponent("Omi")
+      .appendingPathComponent(DesktopLocalProfile.storageDirectoryName(bundleIdentifier: bundleIdentifier))
       .appendingPathComponent("AgentRuntime")
       .appendingPathComponent(bundleComponent)
       .path

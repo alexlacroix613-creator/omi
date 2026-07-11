@@ -1,5 +1,6 @@
 import Foundation
 import Sentry
+import Darwin
 
 private let logFile: String = {
   let isDev = AppBuild.isNonProduction
@@ -31,14 +32,30 @@ private func appendToLogFileSync(_ line: String) {
 
 /// Shared file-write implementation (must be called on logQueue)
 private func writeToLogFile(_ data: Data) {
-  if FileManager.default.fileExists(atPath: logFile) {
-    if let handle = FileHandle(forWritingAtPath: logFile) {
-      handle.seekToEndOfFile()
-      handle.write(data)
-      handle.closeFile()
+  // FileHandle.writeData raises an Objective-C exception for ENOSPC/closed
+  // descriptors, which Swift cannot catch and which previously aborted Omi.
+  // POSIX write returns an error instead, so logging can fail closed without
+  // taking screen/audio capture down with it.
+  var fd = Darwin.open(logFile, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, S_IRUSR | S_IWUSR)
+  guard fd >= 0 else { return }
+
+  var info = stat()
+  if fstat(fd, &info) == 0, info.st_size > 10 * 1024 * 1024 {
+    Darwin.close(fd)
+    fd = Darwin.open(logFile, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, S_IRUSR | S_IWUSR)
+    guard fd >= 0 else { return }
+  }
+  defer { Darwin.close(fd) }
+
+  data.withUnsafeBytes { rawBuffer in
+    guard var base = rawBuffer.baseAddress else { return }
+    var remaining = rawBuffer.count
+    while remaining > 0 {
+      let written = Darwin.write(fd, base, remaining)
+      if written <= 0 { return }
+      remaining -= written
+      base = base.advanced(by: written)
     }
-  } else {
-    FileManager.default.createFile(atPath: logFile, contents: data)
   }
 }
 

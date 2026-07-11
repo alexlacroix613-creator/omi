@@ -11,11 +11,12 @@
 # Keeps by default:
 #   com.omi.computer-macos  (Omi)
 #   com.omi.desktop-dev     (Omi Dev)
+#   com.omi.omi-companion   (permanent Omi Companion)
 set -euo pipefail
 
 MODE="list"
 OUTPUT="text"
-KEEP_BUNDLE_IDS="com.omi.computer-macos,com.omi.desktop-dev"
+KEEP_BUNDLE_IDS="com.omi.computer-macos,com.omi.desktop-dev,com.omi.omi-companion"
 CANDIDATE_PREFIXES="com.omi.omi-"
 
 usage() {

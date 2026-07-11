@@ -37,6 +37,10 @@ import type { WarmupSessionConfig } from "../protocol.js";
 
 type PiMonoConfig = HarnessConfig & {
   onRestart?: (reason: string) => void;
+  provider?: "omi" | "openrouter";
+  providerApiKey?: string;
+  defaultModel?: string;
+  byokCredentials?: Record<string, string>;
 };
 
 // Pi-mono RPC command/event types
@@ -217,6 +221,10 @@ export class PiMonoAdapter implements HarnessAdapter {
     tmpdir(),
     `omi-pi-mono-context-${process.pid}-${Math.random().toString(36).slice(2)}.json`
   );
+  private readonly providerSecretPath = join(
+    tmpdir(),
+    `omi-pi-provider-secret-${process.pid}-${Math.random().toString(36).slice(2)}.json`
+  );
   /** Current system prompt baked into the spawned pi process via --system-prompt.
    *  Pi has no set_system_prompt RPC, so changing this requires a subprocess restart. */
   private currentSystemPrompt: string | undefined;
@@ -241,15 +249,17 @@ export class PiMonoAdapter implements HarnessAdapter {
       return;
     }
 
+    const provider = this.config.provider ?? "omi";
+    const defaultModel = this.config.defaultModel ?? (provider === "openrouter" ? "qwen/qwen3-coder:free" : "omi-sonnet");
     const args = [
       "--mode",
       "rpc",
       "-e",
       this.extensionPath,
       "--provider",
-      "omi",
+      provider,
       "--model",
-      "omi-sonnet",
+      defaultModel,
       // Auto-discover extensions and MCP servers from the user's machine
       // to maximize pi-mono's capabilities (e.g. Playwright, filesystem tools).
       // SECURITY NOTE: auto-discovered extensions run in the pi subprocess and
@@ -267,7 +277,7 @@ export class PiMonoAdapter implements HarnessAdapter {
     // SECURITY: require a Firebase ID token. We MUST NOT fall back to
     // ANTHROPIC_API_KEY — the Omi backend rejects provider keys and forwarding
     // one here would leak the upstream secret to api.omi.me.
-    if (!this.config.authToken) {
+    if (provider === "omi" && !this.config.authToken) {
       throw new Error(
         "pi-mono adapter requires config.authToken (Firebase ID token)"
       );
@@ -295,9 +305,25 @@ export class PiMonoAdapter implements HarnessAdapter {
     // Pass the raw Firebase ID token. pi's openai-completions client already
     // prepends `Authorization: Bearer ${apiKey}` — adding our own "Bearer "
     // prefix here would produce a malformed `Bearer Bearer <token>` header.
-    env.OMI_API_KEY = this.config.authToken;
-    if (this.config.omiApiBaseUrl) {
+    if (provider === "omi" && this.config.authToken) {
+      env.OMI_API_KEY = this.config.authToken;
+    }
+    if (provider === "omi" && this.config.omiApiBaseUrl) {
       env.OMI_API_BASE_URL = this.config.omiApiBaseUrl;
+    }
+    const secretPayload: Record<string, unknown> = {};
+    if (provider === "openrouter") {
+      if (!this.config.providerApiKey) {
+        throw new Error("openrouter adapter requires an Omi-owned provider credential");
+      }
+      secretPayload.openrouter = this.config.providerApiKey;
+    }
+    if (this.config.byokCredentials && Object.keys(this.config.byokCredentials).length > 0) {
+      secretPayload.byok = this.config.byokCredentials;
+    }
+    if (Object.keys(secretPayload).length > 0) {
+      writeFileSync(this.providerSecretPath, JSON.stringify(secretPayload), { mode: 0o600 });
+      env.OMI_PROVIDER_SECRET_PATH = this.providerSecretPath;
     }
     env.OMI_ADAPTER_ID = "pi-mono";
     env.OMI_CONTEXT_FILE = this.contextFilePath;
@@ -342,6 +368,7 @@ export class PiMonoAdapter implements HarnessAdapter {
       this.pendingRequests.clear();
       this.activePromptGeneration = 0;
       rmSync(this.contextFilePath, { force: true });
+      rmSync(this.providerSecretPath, { force: true });
     });
   }
 
@@ -368,6 +395,7 @@ export class PiMonoAdapter implements HarnessAdapter {
     this.pendingRequests.clear();
     this.activePromptGeneration = 0;
     rmSync(this.contextFilePath, { force: true });
+    rmSync(this.providerSecretPath, { force: true });
   }
 
   async createSession(opts: SessionOpts): Promise<string> {
@@ -395,7 +423,7 @@ export class PiMonoAdapter implements HarnessAdapter {
     if (mapped) {
       this.sendCommand({
         type: "set_model",
-        provider: "omi",
+        provider: this.config.provider ?? "omi",
         modelId: mapped,
       });
     }
@@ -923,14 +951,16 @@ export class PiMonoAdapter implements HarnessAdapter {
 }
 
 export class PiMonoRuntimeAdapter implements RuntimeAdapter {
-  readonly adapterId = "pi-mono";
-  readonly capabilities: AdapterCapabilities = adapterCapabilitiesFor("pi-mono");
+  readonly adapterId: "pi-mono" | "openrouter";
+  readonly capabilities: AdapterCapabilities;
 
   private readonly harness: PiMonoAdapter;
   private readonly cancelledAttempts = new Set<string>();
 
-  constructor(harness: PiMonoAdapter) {
+  constructor(harness: PiMonoAdapter, adapterId: "pi-mono" | "openrouter" = "pi-mono") {
     this.harness = harness;
+    this.adapterId = adapterId;
+    this.capabilities = adapterCapabilitiesFor(adapterId);
   }
 
   start(): Promise<void> {

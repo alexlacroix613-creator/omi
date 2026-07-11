@@ -114,6 +114,33 @@ final class OpenRouterOAuthTests: XCTestCase {
     XCTAssertNil(OpenRouterCallback.extractCode(fromRequestTarget: "/callback?code="))
   }
 
+  func testExtractCodeFromRequestTargetRequiresMatchingState() {
+    XCTAssertEqual(
+      OpenRouterCallback.extractCode(
+        fromRequestTarget: "/callback?code=good-code&state=expected",
+        expectedState: "expected"),
+      "good-code")
+    XCTAssertNil(
+      OpenRouterCallback.extractCode(
+        fromRequestTarget: "/callback?code=stolen-code&state=wrong",
+        expectedState: "expected"))
+    XCTAssertNil(
+      OpenRouterCallback.extractCode(
+        fromRequestTarget: "/callback?code=missing-state",
+        expectedState: "expected"))
+  }
+
+  func testCallbackURLCarriesUnpredictableState() throws {
+    let server = try OpenRouterCallbackServer.start(expectedState: "fixed-test-state")
+    defer { server.stop() }
+    let components = try XCTUnwrap(URLComponents(string: server.callbackURLString))
+    XCTAssertEqual(components.host, "127.0.0.1")
+    XCTAssertEqual(components.path, "/callback")
+    XCTAssertEqual(
+      components.queryItems?.first(where: { $0.name == "state" })?.value,
+      "fixed-test-state")
+  }
+
   // MARK: - Authorization URL construction
 
   func testAuthorizationURLIncludesRequiredQueryItems() {

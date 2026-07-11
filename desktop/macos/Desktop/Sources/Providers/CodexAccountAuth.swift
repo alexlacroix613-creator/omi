@@ -15,6 +15,7 @@ enum CodexAccountAuth {
     static let searchDirectories = [
         "/opt/homebrew/bin",
         "/usr/local/bin",
+        "/Applications/Codex.app/Contents/Resources",
     ]
 
     /// Absolute path to `~/.codex/auth.json` for the given home directory.
@@ -59,7 +60,8 @@ enum CodexAccountAuth {
     /// installed, so callers can prompt the user to install it.
     static func locateCodexBinary(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        searchDirectories: [String] = searchDirectories
     ) -> String? {
         if let override = environment["CODEX_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines),
            !override.isEmpty,
@@ -70,6 +72,14 @@ enum CodexAccountAuth {
             let candidate = (dir as NSString).appendingPathComponent("codex")
             if fileManager.isExecutableFile(atPath: candidate) {
                 return candidate
+            }
+        }
+        if let path = environment["PATH"] {
+            for component in path.split(separator: ":") {
+                let candidate = (String(component) as NSString).appendingPathComponent("codex")
+                if fileManager.isExecutableFile(atPath: candidate) {
+                    return candidate
+                }
             }
         }
         return nil

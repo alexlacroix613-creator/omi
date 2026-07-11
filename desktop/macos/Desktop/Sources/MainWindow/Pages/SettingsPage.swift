@@ -409,12 +409,12 @@ struct SettingsContentView: View {
 
   // Developer API Key overrides — also double as BYOK free-plan credentials
   // when all four (Gemini, Anthropic, OpenAI, Deepgram) are provided.
-  @AppStorage("dev_gemini_api_key") var devGeminiKey: String = ""
-  @AppStorage("dev_anthropic_api_key") var devAnthropicKey: String = ""
-  @AppStorage("dev_openai_api_key") var devOpenAIKey: String = ""
-  @AppStorage("dev_deepgram_api_key") var devDeepgramKey: String = ""
+  @State var devGeminiKey: String = APIKeyService.byokKey(.gemini) ?? ""
+  @State var devAnthropicKey: String = APIKeyService.byokKey(.anthropic) ?? ""
+  @State var devOpenAIKey: String = APIKeyService.byokKey(.openai) ?? ""
+  @State var devDeepgramKey: String = APIKeyService.byokKey(.deepgram) ?? ""
   // Standalone OpenRouter key — NOT part of the four-provider BYOK gate.
-  @AppStorage("dev_openrouter_api_key") var devOpenRouterKey: String = ""
+  @State var devOpenRouterKey: String = APIKeyService.currentOpenRouterKey ?? ""
   // How fast the running-agent pill escalates a quiet stream to "still working"
   // / "may have stalled". Read by AgentStallNarration.currentPreset; default
   // "balanced" reproduces the historical 45s/120s thresholds exactly.

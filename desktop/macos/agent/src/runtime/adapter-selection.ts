@@ -8,6 +8,7 @@ import type { AdapterRegistry } from "./adapter-registry.js";
 export const ADAPTER_ACTIVATION_ENV = {
   acp: undefined,
   "pi-mono": "OMI_AUTH_TOKEN",
+  openrouter: undefined,
   hermes: "OMI_HERMES_ADAPTER_COMMAND",
   openclaw: "OMI_OPENCLAW_ADAPTER_COMMAND",
   // Codex is bundled with the app (@agentclientprotocol/codex-acp), so it is
@@ -43,6 +44,15 @@ export const ADAPTER_PROFILES: Record<ProductionAdapterId, AdapterProfile> = {
       throw new Error("pi-mono adapter requires authenticated PiMonoAdapter construction");
     },
   },
+  openrouter: {
+    adapterId: "openrouter",
+    activationEnv: ADAPTER_ACTIVATION_ENV.openrouter,
+    maxWorkers: 1,
+    capabilities: adapterCapabilitiesFor("openrouter"),
+    createAdapter: () => {
+      throw new Error("openrouter adapter requires an in-memory credential");
+    },
+  },
   hermes: {
     adapterId: "hermes",
     activationEnv: ADAPTER_ACTIVATION_ENV.hermes,
@@ -72,6 +82,8 @@ export function adapterIdForHarnessMode(harnessMode: string | undefined): Select
     case "piMono":
     case "pi-mono":
       return "pi-mono";
+    case "openrouter":
+      return "openrouter";
     case "hermes":
       return "hermes";
     case "openclaw":

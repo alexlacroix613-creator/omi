@@ -489,8 +489,7 @@ actor RewindDatabase {
     /// Handles both first-time migration (DB move) and partial re-runs (directory merges).
     private func migrateFromLegacyPathIfNeeded(to userDir: URL) {
         let fileManager = FileManager.default
-        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let omiDir = appSupport.appendingPathComponent("Omi", isDirectory: true)
+        let omiDir = DesktopLocalProfile.applicationSupportURL()
 
         // Determine migration source: prefer legacy root (Omi/omi.db), fall back to anonymous dir.
         // The anonymous fallback covers the case where TierManager or another early caller

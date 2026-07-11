@@ -74,11 +74,16 @@ enum OpenRouterCallback {
   /// Extracts `code` from a raw HTTP request target (e.g. `/callback?code=...`),
   /// as received by the loopback listener below. Returns nil for anything
   /// that isn't a `/callback` request carrying a non-empty `code`.
-  static func extractCode(fromRequestTarget target: String) -> String? {
+  static func extractCode(fromRequestTarget target: String, expectedState: String? = nil) -> String? {
     guard let components = URLComponents(string: "http://127.0.0.1\(target)"),
       components.path == "/callback"
     else {
       return nil
+    }
+    if let expectedState {
+      guard components.queryItems?.first(where: { $0.name == "state" })?.value == expectedState else {
+        return nil
+      }
     }
     guard let code = components.queryItems?.first(where: { $0.name == "code" })?.value,
       !code.isEmpty
@@ -113,14 +118,24 @@ final class OpenRouterCallbackServer: @unchecked Sendable {
   private var completed = false
 
   let port: UInt16
-  var callbackURLString: String { "http://127.0.0.1:\(port)/callback" }
-
-  private init(socketFD: Int32, port: UInt16) {
-    self.socketFD = socketFD
-    self.port = port
+  let expectedState: String
+  var callbackURLString: String {
+    var components = URLComponents()
+    components.scheme = "http"
+    components.host = "127.0.0.1"
+    components.port = Int(port)
+    components.path = "/callback"
+    components.queryItems = [URLQueryItem(name: "state", value: expectedState)]
+    return components.url!.absoluteString
   }
 
-  static func start() throws -> OpenRouterCallbackServer {
+  private init(socketFD: Int32, port: UInt16, expectedState: String) {
+    self.socketFD = socketFD
+    self.port = port
+    self.expectedState = expectedState
+  }
+
+  static func start(expectedState: String = OpenRouterPKCE.generateCodeVerifier()) throws -> OpenRouterCallbackServer {
     let fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
     guard fd >= 0 else { throw ServerError.socketCreationFailed }
 
@@ -157,7 +172,11 @@ final class OpenRouterCallbackServer: @unchecked Sendable {
       throw ServerError.portLookupFailed
     }
 
-    let server = OpenRouterCallbackServer(socketFD: fd, port: UInt16(bigEndian: boundAddr.sin_port))
+    let server = OpenRouterCallbackServer(
+      socketFD: fd,
+      port: UInt16(bigEndian: boundAddr.sin_port),
+      expectedState: expectedState
+    )
     server.acceptRequests()
     return server
   }
@@ -232,12 +251,18 @@ final class OpenRouterCallbackServer: @unchecked Sendable {
           continue
         }
 
-        guard let requestTarget = Self.requestTarget(fromRequestLine: request) else {
+        guard let requestTarget = Self.requestTarget(fromRequestLine: request),
+          Self.hasExpectedHost(request, port: self.port),
+          Self.hasSafeOrigin(request)
+        else {
           self.sendResponse(clientFD, status: "400 Bad Request", message: "Invalid callback request.")
           continue
         }
 
-        if let code = OpenRouterCallback.extractCode(fromRequestTarget: requestTarget) {
+        if let code = OpenRouterCallback.extractCode(
+          fromRequestTarget: requestTarget,
+          expectedState: self.expectedState
+        ) {
           self.sendResponse(
             clientFD, status: "200 OK", message: "Connected — you can close this tab.")
           self.finish(.success(code))
@@ -257,6 +282,26 @@ final class OpenRouterCallbackServer: @unchecked Sendable {
     let parts = requestLine.split(separator: " ")
     guard parts.count >= 2, parts[0] == "GET" else { return nil }
     return String(parts[1])
+  }
+
+  private static func hasExpectedHost(_ request: String, port: UInt16) -> Bool {
+    let expected = "host: 127.0.0.1:\(port)"
+    return request.lowercased().split(separator: "\n").contains {
+      $0.trimmingCharacters(in: .whitespacesAndNewlines) == expected
+    }
+  }
+
+  private static func hasSafeOrigin(_ request: String) -> Bool {
+    let lines = request.split(separator: "\n").map {
+      $0.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    guard let origin = lines.first(where: { $0.lowercased().hasPrefix("origin:") }) else {
+      return true
+    }
+    guard let value = origin.split(separator: ":", maxSplits: 1).last?.trimmingCharacters(in: .whitespaces),
+      let url = URL(string: value)
+    else { return false }
+    return url.scheme == "https" && url.host == "openrouter.ai"
   }
 
   private func sendResponse(_ clientFD: Int32, status: String, message: String) {
@@ -496,10 +541,11 @@ final class OpenRouterOAuthController: ObservableObject {
   private func runFlow(applyKey: @escaping (String) -> Void) async {
     let verifier = OpenRouterPKCE.generateCodeVerifier()
     let challenge = OpenRouterPKCE.codeChallenge(forVerifier: verifier)
+    let stateNonce = OpenRouterPKCE.generateCodeVerifier()
 
     let server: OpenRouterCallbackServer
     do {
-      server = try OpenRouterCallbackServer.start()
+      server = try OpenRouterCallbackServer.start(expectedState: stateNonce)
     } catch {
       state = .failed(OpenRouterAuthError.listenerFailed("\(error)").localizedDescription)
       return

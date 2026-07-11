@@ -120,7 +120,7 @@ enum CostAwareModelRouter {
   ///
   /// - Claude  → .userClaude  (acp harness — Claude subscription)
   /// - ChatGPT → .userChatGPT (codex harness — ChatGPT/Codex subscription)
-  /// - OpenRouter (free) → .openClaw (openclaw harness — BYOK, uses OR key)
+  /// - OpenRouter (free) → .openRouter (pi/OpenRouter harness using Omi Keychain)
   /// - On-device / unknown → .piMono (Omi cloud default)
   static func bridgeMode(for route: Route) -> ChatProvider.BridgeMode {
     switch route.providerLabel {
@@ -129,7 +129,7 @@ enum CostAwareModelRouter {
     case "ChatGPT":
       return .userChatGPT
     case "OpenRouter (free)":
-      return .openClaw
+      return .openRouter
     default:
       return .piMono
     }

@@ -163,7 +163,7 @@ final class CostAwareModelRouterTests: XCTestCase {
         openRouterKeyPresent: true
       )
     )
-    XCTAssertEqual(CostAwareModelRouter.bridgeMode(for: route), .openClaw)
+    XCTAssertEqual(CostAwareModelRouter.bridgeMode(for: route), .openRouter)
   }
 
   func testBridgeModeForOnDeviceRoute() {

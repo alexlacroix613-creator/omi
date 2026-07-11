@@ -29,6 +29,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { Type } from "@mariozechner/pi-ai";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { createConnection, type Socket } from "node:net";
 import { dirname, join, resolve } from "node:path";
@@ -742,21 +743,59 @@ export default function omiProvider(pi: ExtensionAPI): void {
   const baseUrl = process.env.OMI_API_BASE_URL || "https://api.omi.me/v2";
   const apiKey = process.env.OMI_API_KEY || "";
 
-  // BYOK: the Swift app sets OMI_BYOK_* env vars (all four, or none) when the user
-  // is on the free plan with their own provider keys. Attach them as X-BYOK-*
+  const providerSecretPath = process.env.OMI_PROVIDER_SECRET_PATH;
+  let handedOffBYOK: Record<string, string> = {};
+  if (providerSecretPath) {
+    try {
+      const payload = JSON.parse(readFileSync(providerSecretPath, "utf8")) as {
+        openrouter?: string;
+        byok?: Record<string, string>;
+      };
+      unlinkSync(providerSecretPath);
+      handedOffBYOK = payload.byok ?? {};
+      if (payload.openrouter?.trim()) {
+        pi.registerProvider("openrouter", {
+          api: "openai-completions",
+          baseUrl: "https://openrouter.ai/api/v1",
+          apiKey: payload.openrouter.trim(),
+          headers: {
+            "HTTP-Referer": "https://omi.me",
+            "X-Title": "Omi Companion",
+          },
+          models: [
+            {
+              id: "qwen/qwen3-coder:free",
+              name: "Qwen3 Coder (OpenRouter free)",
+              reasoning: true,
+              input: ["text"],
+              contextWindow: 262_144,
+              maxTokens: 16_384,
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            },
+          ],
+        });
+      }
+    } catch {
+      try { unlinkSync(providerSecretPath); } catch {}
+      process.stderr.write("[openrouter-provider] credential handoff failed\n");
+    }
+  }
+
+  // BYOK arrives through the one-shot, mode-0600 credential handoff file. Attach
+  // the complete set as X-BYOK-*
   // headers on every request to the omi backend so it (a) applies the request-level
   // all-four-keys paywall exemption and (b) routes inference through the user's own
   // Anthropic key instead of Omi's server key. We only attach the complete set —
   // the backend's has_all_byok_keys() requires all four to be present.
   const byokMap: Array<[string, string]> = [
-    ["OMI_BYOK_OPENAI", "X-BYOK-OpenAI"],
-    ["OMI_BYOK_ANTHROPIC", "X-BYOK-Anthropic"],
-    ["OMI_BYOK_GEMINI", "X-BYOK-Gemini"],
-    ["OMI_BYOK_DEEPGRAM", "X-BYOK-Deepgram"],
+    ["openai", "X-BYOK-OpenAI"],
+    ["anthropic", "X-BYOK-Anthropic"],
+    ["gemini", "X-BYOK-Gemini"],
+    ["deepgram", "X-BYOK-Deepgram"],
   ];
   const byokHeaders: Record<string, string> = {};
-  for (const [envName, headerName] of byokMap) {
-    const value = process.env[envName];
+  for (const [providerName, headerName] of byokMap) {
+    const value = handedOffBYOK[providerName];
     if (value && value.length > 0) byokHeaders[headerName] = value;
   }
   const byokActive = Object.keys(byokHeaders).length === byokMap.length;

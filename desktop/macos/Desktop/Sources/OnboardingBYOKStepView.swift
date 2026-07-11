@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// Final step before Tasks: offer a free-forever plan if the user supplies their
-/// own API keys for OpenAI, Anthropic, Gemini, and Deepgram. Keys live on the
-/// device (UserDefaults); the backend receives only SHA-256 fingerprints.
+/// own API keys for OpenAI, Anthropic, Gemini, and Deepgram. Keys live in the
+/// bundle-scoped Keychain; the backend receives only SHA-256 fingerprints.
 struct OnboardingBYOKStepView: View {
   @ObservedObject var graphViewModel: MemoryGraphViewModel
   let stepIndex: Int
@@ -11,10 +11,10 @@ struct OnboardingBYOKStepView: View {
   let onSkip: () -> Void
   let onForceComplete: (() -> Void)?
 
-  @AppStorage(BYOKProvider.openai.storageKey) private var openaiKey: String = ""
-  @AppStorage(BYOKProvider.anthropic.storageKey) private var anthropicKey: String = ""
-  @AppStorage(BYOKProvider.gemini.storageKey) private var geminiKey: String = ""
-  @AppStorage(BYOKProvider.deepgram.storageKey) private var deepgramKey: String = ""
+  @State private var openaiKey: String = APIKeyService.byokKey(.openai) ?? ""
+  @State private var anthropicKey: String = APIKeyService.byokKey(.anthropic) ?? ""
+  @State private var geminiKey: String = APIKeyService.byokKey(.gemini) ?? ""
+  @State private var deepgramKey: String = APIKeyService.byokKey(.deepgram) ?? ""
 
   @State private var isActivating = false
   @State private var activationError: String?
@@ -168,8 +168,11 @@ struct OnboardingBYOKStepView: View {
       return
     }
 
-    // Step 2: all four authenticate — flip the backend flag.
+    // Step 2: persist the verified values, then flip the backend flag.
     do {
+      for (provider, key) in keysToCheck {
+        try APIKeyService.saveByokKey(key, provider: provider)
+      }
       try await APIClient.shared.activateBYOK(fingerprints: BYOKProvider.allCases.reduce(into: [:]) {
         acc, provider in
         if let key = APIKeyService.byokKey(provider) {

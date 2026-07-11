@@ -153,6 +153,8 @@ function adapterFailureLabel(adapterId: ProductionAdapterId, provider?: string):
       return "Hermes";
     case "pi-mono":
       return "pi-mono";
+    case "openrouter":
+      return "OpenRouter";
     case "codex":
       return "Codex";
     case "acp":

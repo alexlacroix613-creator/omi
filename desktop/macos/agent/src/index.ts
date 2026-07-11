@@ -44,6 +44,7 @@ import type {
   ProtocolVersion,
   WarmupMessage,
   RefreshTokenMessage,
+  ConfigureProviderCredentialMessage,
   AuthMethod,
 } from "./protocol.js";
 import { requestIdFor } from "./protocol.js";
@@ -940,6 +941,7 @@ async function main(): Promise<void> {
   let piMonoAuthToken = process.env.OMI_AUTH_TOKEN;
   const piMonoAdapters = new Set<import("./adapters/pi-mono.js").PiMonoAdapter>();
   const localAcpAdapters = new Set<RuntimeAdapter>();
+  const providerCredentials = new Map<string, string>();
   const stopLocalAcpAdapters = async (): Promise<void> => {
     await Promise.all([...localAcpAdapters].map((adapter) => adapter.stop()));
   };
@@ -953,6 +955,12 @@ async function main(): Promise<void> {
         const harness = new piMonoClasses!.PiMonoAdapter({
           omiApiBaseUrl: process.env.OMI_API_BASE_URL,
           authToken: piMonoAuthToken,
+          byokCredentials: {
+            openai: providerCredentials.get("byok.openai") ?? "",
+            anthropic: providerCredentials.get("byok.anthropic") ?? "",
+            gemini: providerCredentials.get("byok.gemini") ?? "",
+            deepgram: providerCredentials.get("byok.deepgram") ?? "",
+          },
         });
         piMonoAdapters.add(harness);
         return new piMonoClasses!.PiMonoRuntimeAdapter(harness);
@@ -963,6 +971,24 @@ async function main(): Promise<void> {
   };
 
   const piMonoAvailable = await ensurePiMonoAdapter(process.env.OMI_AUTH_TOKEN);
+  const ensureOpenRouterAdapter = async (): Promise<boolean> => {
+    const credential = providerCredentials.get("openrouter");
+    if (!credential) return false;
+    piMonoClasses ??= await import("./adapters/pi-mono.js");
+    if (!registry.has("openrouter")) {
+      registry.register("openrouter", () => {
+        const harness = new piMonoClasses!.PiMonoAdapter({
+          provider: "openrouter",
+          providerApiKey: providerCredentials.get("openrouter"),
+          defaultModel: "qwen/qwen3-coder:free",
+        });
+        piMonoAdapters.add(harness);
+        return new piMonoClasses!.PiMonoRuntimeAdapter(harness, "openrouter");
+      }, configuredPiMonoMaxWorkers());
+      logErr(`OpenRouter adapter registered (maxWorkers=${configuredPiMonoMaxWorkers()})`);
+    }
+    return true;
+  };
   const ensureHermesAdapter = async (): Promise<boolean> => {
     return ensureRegisteredAdapter(registry, "hermes", {
       log: logErr,
@@ -1104,6 +1130,10 @@ async function main(): Promise<void> {
               await initializeAcp();
             } else if (adapterId === "pi-mono") {
               await ensurePiMonoAdapter(process.env.OMI_AUTH_TOKEN);
+            } else if (adapterId === "openrouter") {
+              if (!(await ensureOpenRouterAdapter())) {
+                throw new Error("OpenRouter is not configured in Omi Keychain");
+              }
             } else if (adapterId === "hermes") {
               if (!(await ensureHermesAdapter())) {
                 throw new Error(adapterActivationError("hermes"));
@@ -1457,6 +1487,18 @@ async function main(): Promise<void> {
         break;
       }
 
+      case "configure_provider_credential": {
+        const credentialMessage = msg as ConfigureProviderCredentialMessage;
+        if (credentialMessage.credential.trim()) {
+          providerCredentials.set(credentialMessage.provider, credentialMessage.credential.trim());
+        }
+        if (credentialMessage.provider === "openrouter") {
+          await ensureOpenRouterAdapter();
+          logErr("OpenRouter credential configured in memory");
+        }
+        break;
+      }
+
       case "authenticate": {
         // Legacy fallback: OAuth flow now handles auth internally.
         // This handler is kept for backward compatibility.
@@ -1470,6 +1512,7 @@ async function main(): Promise<void> {
       }
 
       case "stop":
+        providerCredentials.clear();
         logErr("Received stop signal, exiting");
         store.close();
         await acpAdapter.stop();

@@ -91,4 +91,43 @@ final class CodexAccountAuthTests: XCTestCase {
         // We only assert the override path itself was not falsely accepted.
         XCTAssertNotEqual(found, "/nonexistent/codex")
     }
+
+    func testLocateCodexBinaryUsesSearchDirectoriesFallback() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let resourceDir = dir.appendingPathComponent("codex-dir")
+        try fm.createDirectory(at: resourceDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+
+        let codex = resourceDir.appendingPathComponent("codex")
+        fm.createFile(atPath: codex.path, contents: Data(), attributes: [.posixPermissions: 0o755])
+
+        let found = CodexAccountAuth.locateCodexBinary(
+            environment: ["CODEX_PATH": "/nonexistent/codex-\(UUID().uuidString)"],
+            fileManager: fm,
+            searchDirectories: [resourceDir.path]
+        )
+        XCTAssertEqual(found, codex.path)
+    }
+
+    func testLocateCodexBinaryFallsBackToPath() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let binDir = dir.appendingPathComponent("path-bin")
+        try fm.createDirectory(at: binDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+
+        let codex = binDir.appendingPathComponent("codex")
+        fm.createFile(atPath: codex.path, contents: Data(), attributes: [.posixPermissions: 0o755])
+
+        let found = CodexAccountAuth.locateCodexBinary(
+            environment: [
+                "CODEX_PATH": "/nonexistent/codex-\(UUID().uuidString)",
+                "PATH": binDir.path,
+            ],
+            fileManager: fm,
+            searchDirectories: ["/nonexistent"]
+        )
+        XCTAssertEqual(found, codex.path)
+    }
 }

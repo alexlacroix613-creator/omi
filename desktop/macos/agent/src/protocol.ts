@@ -105,6 +105,13 @@ export interface RefreshTokenMessage {
   ownerId?: string;
 }
 
+/** One-way, non-logging credential handoff from the Keychain-owning Swift app. */
+export interface ConfigureProviderCredentialMessage {
+  type: "configure_provider_credential";
+  provider: "openrouter" | "byok.openai" | "byok.anthropic" | "byok.gemini" | "byok.deepgram";
+  credential: string;
+}
+
 export type InboundMessage =
   | QueryMessage
   | ToolResultMessage
@@ -115,7 +122,8 @@ export type InboundMessage =
   | InvalidateSessionMessage
   | AuthenticateMessage
   | WarmupMessage
-  | RefreshTokenMessage;
+  | RefreshTokenMessage
+  | ConfigureProviderCredentialMessage;
 
 // === Bridge → Swift (stdout) ===
 

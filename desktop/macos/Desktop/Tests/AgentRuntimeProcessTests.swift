@@ -99,6 +99,17 @@ final class AgentRuntimeProcessTests: XCTestCase {
     XCTAssertTrue(second.hasSuffix("AgentRuntime/com.omi.omi-ticket-five-b"))
   }
 
+  func testPermanentCompanionUsesIsolatedStorageRoot() {
+    let home = URL(fileURLWithPath: "/tmp/test-home")
+    let state = AgentRuntimeProcess.defaultStateDirectory(
+      bundleIdentifier: "com.omi.omi-companion",
+      homeDirectory: home
+    )
+
+    XCTAssertTrue(state.contains("/Application Support/Omi Companion/"))
+    XCTAssertFalse(state.contains("/Application Support/Omi/"))
+  }
+
   func testCompatibilitySessionIdPrefersAdapterSession() {
     let withAdapter = AgentBridge.QueryResult(
       text: "done",

@@ -57,6 +57,7 @@ PY
 
 make_app "Omi" "com.omi.computer-macos" "Omi"
 make_app "Omi Dev" "com.omi.desktop-dev" "Omi Dev"
+make_app "Omi Companion" "com.omi.omi-companion" "Omi Companion"
 make_app "omi-test-one" "com.omi.omi-test-one" "omi-test-one"
 make_app "omi-review" "com.omi.review-build" "omi-review"
 make_app "Other" "com.example.other" "Other"
@@ -77,6 +78,7 @@ conn.executemany(
         ("kTCCServiceMicrophone", "com.omi.omi-test-one", 0, 2, 1),
         ("kTCCServiceScreenCapture", "com.omi.omi-pref-only", 0, 2, 1),
         ("kTCCServiceMicrophone", "com.omi.desktop-dev", 0, 2, 1),
+        ("kTCCServiceScreenCapture", "com.omi.omi-companion", 0, 2, 1),
         ("kTCCServiceMicrophone", "com.omi.review-build", 0, 2, 1),
         ("kTCCServiceMicrophone", "/Applications/Omi.app/Contents/MacOS/Omi", 1, 2, 1),
         ("kTCCServiceMicrophone", "/Applications/Omi Dev.app/Contents/MacOS/Omi", 1, 2, 1),
@@ -101,12 +103,14 @@ assert data["tccutil_bundle_ids"] == ["com.omi.omi-test-one"], data["tccutil_bun
 assert set(data["candidate_bundle_ids"]) == {"com.omi.omi-test-one", "com.omi.omi-pref-only"}
 assert "com.omi.computer-macos" in data["keep_bundle_ids"]
 assert "com.omi.desktop-dev" in data["keep_bundle_ids"]
-assert data["summary"]["apps"].get("keep") == 2, data["summary"]
+assert "com.omi.omi-companion" in data["keep_bundle_ids"]
+assert data["summary"]["apps"].get("keep") == 3, data["summary"]
 assert data["summary"]["apps"].get("candidate") == 1, data["summary"]
 assert data["summary"]["apps"].get("review") == 1, data["summary"]
 tcc_classes = {row["client"]: row["classification"] for row in data["tcc"]["rows"]}
 assert tcc_classes["/Applications/Omi.app/Contents/MacOS/Omi"] == "keep", tcc_classes
 assert tcc_classes["/Applications/Omi Dev.app/Contents/MacOS/Omi"] == "keep", tcc_classes
+assert tcc_classes["com.omi.omi-companion"] == "keep", tcc_classes
 assert tcc_classes["/Applications/omi-path-only.app/Contents/MacOS/Omi"] == "candidate", tcc_classes
 PY
 

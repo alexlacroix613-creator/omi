@@ -71,10 +71,10 @@ extension SettingsContentView {
         }
       }
     }
-    .onChange(of: devOpenAIKey) { _, _ in refreshBYOKActivation() }
-    .onChange(of: devAnthropicKey) { _, _ in refreshBYOKActivation() }
-    .onChange(of: devGeminiKey) { _, _ in refreshBYOKActivation() }
-    .onChange(of: devDeepgramKey) { _, _ in refreshBYOKActivation() }
+    .onChange(of: devOpenAIKey) { _, value in persistBYOKDraft(.openai, value: value) }
+    .onChange(of: devAnthropicKey) { _, value in persistBYOKDraft(.anthropic, value: value) }
+    .onChange(of: devGeminiKey) { _, value in persistBYOKDraft(.gemini, value: value) }
+    .onChange(of: devDeepgramKey) { _, value in persistBYOKDraft(.deepgram, value: value) }
   }
 
   var hasAnyBYOKKey: Bool {
@@ -117,6 +117,15 @@ extension SettingsContentView {
     devDeepgramKey = ""
     Task {
       try? await APIClient.shared.deactivateBYOK()
+    }
+  }
+
+  func persistBYOKDraft(_ provider: BYOKProvider, value: String) {
+    do {
+      try APIKeyService.saveByokKey(value, provider: provider)
+      refreshBYOKActivation()
+    } catch {
+      byokActivationError = "Could not save \(provider.displayName) in Keychain: \(error.localizedDescription)"
     }
   }
 

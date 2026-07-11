@@ -1038,7 +1038,7 @@ extension SettingsContentView {
 
         OpenRouterConnectButton(onConnected: { key in
           devOpenRouterKey = key
-          applyOpenRouterKeyToEnvironment(key)
+          persistOpenRouterKey(key)
         })
 
         Text("or paste a key manually")
@@ -1049,14 +1049,12 @@ extension SettingsContentView {
           SecureField("sk-or-v1-...", text: $devOpenRouterKey)
             .textFieldStyle(.roundedBorder)
             .scaledFont(size: 13)
-            .onChange(of: devOpenRouterKey) { _, newValue in
-              applyOpenRouterKeyToEnvironment(newValue)
-            }
+            .onChange(of: devOpenRouterKey) { _, newValue in persistOpenRouterKey(newValue) }
 
           if !devOpenRouterKey.isEmpty {
             Button("Clear") {
               devOpenRouterKey = ""
-              applyOpenRouterKeyToEnvironment("")
+              persistOpenRouterKey("")
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
@@ -1066,14 +1064,11 @@ extension SettingsContentView {
     }
   }
 
-  func applyOpenRouterKeyToEnvironment(_ value: String) {
-    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-    if trimmed.isEmpty {
-      unsetenv("OPENROUTER_API_KEY")
-      unsetenv("OMI_OPENROUTER_API_KEY")
-    } else {
-      setenv("OPENROUTER_API_KEY", trimmed, 1)
-      setenv("OMI_OPENROUTER_API_KEY", trimmed, 1)
+  func persistOpenRouterKey(_ value: String) {
+    do {
+      try APIKeyService.saveOpenRouterKey(value)
+    } catch {
+      byokActivationError = "Could not save OpenRouter in Keychain: \(error.localizedDescription)"
     }
   }
 

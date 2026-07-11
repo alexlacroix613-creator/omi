@@ -51,6 +51,16 @@ struct AIProvider: Identifiable {
     bridgeModeRawValue: "codexCli"
   )
 
+  static let openRouter = AIProvider(
+    id: "openrouter",
+    displayName: "OpenRouter",
+    tagline: "Your OpenRouter key from Omi Keychain",
+    attributionURL: URL(string: "https://openrouter.ai"),
+    sfSymbol: "network",
+    logoResource: nil,
+    bridgeModeRawValue: "openrouter"
+  )
+
   static let hermes = AIProvider(
     id: "hermes",
     displayName: "Hermes",
@@ -71,7 +81,7 @@ struct AIProvider: Identifiable {
     bridgeModeRawValue: "openclaw"
   )
 
-  static let all: [AIProvider] = [.piMono, .claude, .chatgpt, .hermes, .openClaw]
+  static let all: [AIProvider] = [.piMono, .claude, .chatgpt, .openRouter, .hermes, .openClaw]
 
   /// Look up a provider by its `chatBridgeMode` raw value.
   static func from(bridgeMode: String) -> AIProvider? {

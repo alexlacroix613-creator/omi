@@ -1,0 +1,3 @@
+{
+  "change": "Added secure OpenRouter, Claude subscription, ChatGPT subscription, and Keychain-backed BYOK provider routes for Omi Companion"
+}
