@@ -47,16 +47,7 @@ private func writeToLogFile(_ data: Data) {
   }
   defer { Darwin.close(fd) }
 
-  data.withUnsafeBytes { rawBuffer in
-    guard var base = rawBuffer.baseAddress else { return }
-    var remaining = rawBuffer.count
-    while remaining > 0 {
-      let written = Darwin.write(fd, base, remaining)
-      if written <= 0 { return }
-      remaining -= written
-      base = base.advanced(by: written)
-    }
-  }
+  writeLogData(data, to: fd)
 }
 
 // MARK: - Performance Logging
