@@ -16,8 +16,13 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { extname, join, normalize, sep } from 'node:path'
 
-const PREFERRED_PORT = 5179
+export const PREFERRED_PORT = 5179
 const PORT_ATTEMPTS = 10
+
+export function rendererPortCandidates(allowFallback: boolean): number[] {
+  const count = allowFallback ? PORT_ATTEMPTS : 1
+  return Array.from({ length: count }, (_, index) => PREFERRED_PORT + index)
+}
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -63,7 +68,10 @@ function listen(server: Server, port: number): Promise<boolean> {
  * app.asar — Electron's patched fs handles it) and remember the resulting base
  * URL. Call once at startup in production, before any window loads.
  */
-export async function startRendererServer(rendererRoot: string): Promise<string> {
+export async function startRendererServer(
+  rendererRoot: string,
+  options: { allowPortFallback?: boolean } = {}
+): Promise<string> {
   const root = normalize(rendererRoot)
 
   const server = createServer((req, res) => {
@@ -89,8 +97,8 @@ export async function startRendererServer(rendererRoot: string): Promise<string>
     })()
   })
 
-  for (let i = 0; i < PORT_ATTEMPTS; i++) {
-    const port = PREFERRED_PORT + i
+  const ports = rendererPortCandidates(options.allowPortFallback === true)
+  for (const port of ports) {
     if (await listen(server, port)) {
       baseUrl = `http://localhost:${port}`
       if (port !== PREFERRED_PORT) {
@@ -103,6 +111,8 @@ export async function startRendererServer(rendererRoot: string): Promise<string>
     }
   }
   throw new Error(
-    `[renderer-server] no free port in ${PREFERRED_PORT}–${PREFERRED_PORT + PORT_ATTEMPTS - 1}`
+    ports.length === 1
+      ? `[renderer-server] required port ${PREFERRED_PORT} is unavailable`
+      : `[renderer-server] no free port in ${PREFERRED_PORT}–${PREFERRED_PORT + PORT_ATTEMPTS - 1}`
   )
 }

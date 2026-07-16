@@ -1,4 +1,13 @@
-import { app, shell, BrowserWindow, ipcMain, session, nativeImage, desktopCapturer } from 'electron'
+import {
+  app,
+  shell,
+  BrowserWindow,
+  ipcMain,
+  session,
+  nativeImage,
+  desktopCapturer,
+  dialog
+} from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import iconPath from '../../resources/icon.png?asset'
@@ -38,6 +47,7 @@ import { startRewindOcr } from './rewind/ocrService'
 import { startRewindRetention } from './rewind/retentionRunner'
 import { prewarmPrimarySourceId } from './rewind/sourceId'
 import { perfMark, flushPerfMarks } from '../shared/perf'
+import { focusPrimaryWindow, registerSingleInstance } from './singleInstance'
 
 // Default the perf log to the user data dir so marks double as lightweight prod
 // telemetry. The bench runner overrides OMI_PERF_LOG to point at .bench/.
@@ -82,6 +92,22 @@ if (sandbox && process.env.OMI_BENCH !== '1') {
   const suffix = sandbox === '1' ? 'chat-kg' : sandbox.replace(/[^a-zA-Z0-9._-]/g, '-')
   app.setPath('userData', join(app.getPath('appData'), `omi-windows-sandbox-${suffix}`))
 }
+
+// Firebase auth and onboarding state are scoped to the renderer's exact localhost
+// origin. A second app process used to fall through to port 5180+, which made every
+// desktop-icon click look like a brand-new install. Keep one process per userData
+// profile and route subsequent launches back to its primary window. Bench runs are
+// deliberately exempt because their harness supplies isolated profiles.
+let primaryWindow: BrowserWindow | null = null
+let focusWhenReady = false
+const hasSingleInstanceLock = registerSingleInstance(
+  app,
+  () => primaryWindow,
+  () => {
+    focusWhenReady = true
+  },
+  process.env.OMI_BENCH === '1'
+)
 
 const icon = nativeImage.createFromPath(iconPath)
 import {
@@ -128,6 +154,10 @@ function createWindow(): BrowserWindow {
   // frontmost. (The floating overlay keeps its own protection in overlay/window.ts.)
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+    if (focusWhenReady) {
+      focusWhenReady = false
+      focusPrimaryWindow(mainWindow)
+    }
   })
   perfMark('window:created')
 
@@ -181,6 +211,10 @@ function createWindow(): BrowserWindow {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+  primaryWindow = mainWindow
+  mainWindow.on('closed', () => {
+    if (primaryWindow === mainWindow) primaryWindow = null
+  })
   return mainWindow
 }
 
@@ -188,6 +222,7 @@ function createWindow(): BrowserWindow {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) return
   perfMark('main:ready')
 
   // Production only (dev uses the vite dev server): serve the packaged renderer
@@ -195,12 +230,19 @@ app.whenReady().then(async () => {
   // any window loads.
   if (!(is.dev && process.env['ELECTRON_RENDERER_URL'])) {
     try {
-      await startRendererServer(join(__dirname, '../renderer'))
+      await startRendererServer(join(__dirname, '../renderer'), {
+        // Named sandbox/bench profiles may intentionally run beside production.
+        // The real profile must never change origin and silently lose its session.
+        allowPortFallback: Boolean(sandbox) || process.env.OMI_BENCH === '1'
+      })
     } catch (e) {
-      console.error(
-        '[main] renderer server failed to start — falling back to file:// (sign-in will not work):',
-        e
+      console.error('[main] renderer server failed to start:', e)
+      dialog.showErrorBox(
+        'Omi could not start',
+        'Omi could not open its saved local session. Close any existing Omi windows and reopen it. If the problem continues, restart Windows.'
       )
+      app.quit()
+      return
     }
   }
   // Set app user model id for windows
